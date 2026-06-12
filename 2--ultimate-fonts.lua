@@ -371,12 +371,113 @@ end
 applyUIFont()
 
 --------------------------------------------------------------------------------
+-- SHARED LOGIC
+--------------------------------------------------------------------------------
+
+local FontOverride = {
+	SETTINGS_KEY = "",
+	FONT_PATH_SETTING ="",
+	FONT_NAME_SETTING = "",
+	FONT_OPTIONS = {
+		{
+			setting_suffix = "",
+			label = _(""),
+			default_face_name = "",
+		},
+	},
+}
+
+function FontOverride:new (o)
+	o = o or {}   -- create object if user does not provide one
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+function FontOverride:getFontSettingKeys(option_key)
+	return getScopedFontSettingKeys(self.SETTINGS_KEY, self.FONT_OPTIONS[option_key].setting_suffix)
+end
+
+function FontOverride:getFontOverridePath()
+	return G_reader_settings:readSetting(self.FONT_PATH_SETTING)
+end
+
+function FontOverride:hasFontOverride()
+	return self:getFontOverridePath() ~= nil
+end
+
+function FontOverride:getFontBasePath()
+	return self:getFontOverridePath() or getRegularFontPath(Font.fontmap.smallinfofont)
+end
+
+function FontOverride:getDefaultFontPath(option_key)
+	return getRegularFontPath(Font.fontmap[self.FONT_OPTIONS[option_key].default_face_name])
+end
+
+function FontOverride:hasFontSlotOverride(option_key)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	return G_reader_settings:readSetting(setting_keys.path) ~= nil
+end
+
+function FontOverride:getFontPath(option_key)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	return G_reader_settings:readSetting(setting_keys.path)
+		or self:getFontOverridePath()
+		or self:getDefaultFontPath(option_key)
+end
+
+function FontOverride:saveFontSlotOverride(option_key, font_path, font_name)
+	saveFontOverride(self:getFontSettingKeys(option_key), font_path, font_name)
+end
+
+function FontOverride:clearFontSlotOverride(option_key)
+	self:saveFontSlotOverride(option_key, nil, nil)
+end
+
+function FontOverride:clearFontSlotOverrides(option_key)
+	for _, option in ipairs(option_key) do
+		self:clearFontSlotOverride(option)
+	end
+	UIManager:setDirty(nil, "ui")
+end
+
+function FontOverride:getInheritedFontPath(option_key)
+	if self:hasFontOverride() then
+		return self:getFontBasePath(), G_reader_settings:readSetting(self.FONT_NAME_SETTING), true
+	end
+	return self:getDefaultFontPath(option_key), nil, false
+end
+
+function FontOverride:getFontDisplay(option_key)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	local has_override = self:hasFontSlotOverride(option_key)
+	if has_override then
+		return getUIFontNameDisplay(self:getFontPath(option_key), G_reader_settings:readSetting(setting_keys.name), false)
+	end
+
+	local inherited_path, inherited_name = self:getInheritedFontPath(option_key)
+	return getUIFontNameDisplay(inherited_path, inherited_name, true)
+end
+
+function FontOverride:getFace(option_key)
+	local font_path = self:getFontPath(option_key)
+	local default_face = Font:getFace(self.FONT_OPTIONS[option_key].default_face_name)
+	if font_path then
+		return Font:getFace(font_path, default_face.orig_size)
+	end
+	return default_face
+end
+
+--------------------------------------------------------------------------------
 -- 3. MAIN MENU FONT LOGIC
 --------------------------------------------------------------------------------
 
 local TouchMenu = require("ui/widget/touchmenu")
 local original_TouchMenu_init, original_TouchMenu_updateItems
 
+
+
+local MAIN_MENU_FONT_KEY = "mainmenu"
 local MAIN_MENU_FONT_PATH_SETTING = "mainmenu_font_path"
 local MAIN_MENU_FONT_NAME_SETTING = "mainmenu_font_name"
 local MAIN_MENU_FONT_OPTIONS = {
@@ -402,8 +503,15 @@ local MAIN_MENU_FONT_OPTION_LIST = {
 	MAIN_MENU_FONT_OPTIONS.time_info,
 }
 
+local MainMenuFontOverrides = FontOverride:new{
+	SETTINGS_KEY = MAIN_MENU_FONT_KEY,
+	FONT_PATH_SETTING = MAIN_MENU_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = MAIN_MENU_FONT_NAME_SETTING,
+	FONT_OPTIONS = MAIN_MENU_FONT_OPTIONS,
+}
+
 local function getMainMenuFontSettingKeys(option)
-	return getScopedFontSettingKeys("mainmenu", option.setting_suffix)
+	return getScopedFontSettingKeys(MAIN_MENU_FONT_KEY, option.setting_suffix)
 end
 
 local function getMainMenuFontOverridePath()
@@ -518,15 +626,15 @@ end
 local function applyMainMenuFontToTouchMenu(touchmenu)
 	local touchmenu_item_class = getTouchMenuItemClass()
 	if touchmenu_item_class then
-		touchmenu_item_class.face = getMainMenuFace(MAIN_MENU_FONT_OPTIONS.menu_item)
+		touchmenu_item_class.face = MainMenuFontOverrides:getFace(MAIN_MENU_FONT_OPTIONS.menu_item)
 	end
 
-	touchmenu.fface = getMainMenuFace(MAIN_MENU_FONT_OPTIONS.page_info_text)
+	touchmenu.fface = MainMenuFontOverrides:getFace(MAIN_MENU_FONT_OPTIONS.page_info_text)
 	if touchmenu.page_info_text then
-		touchmenu.page_info_text.face = getMainMenuFace(MAIN_MENU_FONT_OPTIONS.page_info_text)
+		touchmenu.page_info_text.face = MainMenuFontOverrides:getFace(MAIN_MENU_FONT_OPTIONS.page_info_text)
 	end
 	if touchmenu.time_info then
-		touchmenu.time_info.face = getMainMenuFace(MAIN_MENU_FONT_OPTIONS.time_info)
+		touchmenu.time_info.face = MainMenuFontOverrides:getFace(MAIN_MENU_FONT_OPTIONS.time_info)
 	end
 	if touchmenu.device_info then
 		touchmenu.device_info:resetLayout()
@@ -636,7 +744,59 @@ end
 --------------------------------------------------------------------------------
 -- 5. titlebar font logic
 --------------------------------------------------------------------------------
+local TitlebarWidget = require("ui/widget/titlebar")
+local original_TitlebarWidget_init = TitlebarWidget.init
 
+local TITLEBAR_FONT_OPTIONS = {
+	title_face_fullscreen = {
+		setting_suffix = "title_face_fullscreen",
+		label = _("Title (fullscreen)"),
+		default_face_name = "smalltfont",
+	},
+	title_face_not_fullscreen = {
+		setting_suffix = "title_face_not_fullscreen",
+		label = _("Title (not fullscreen)"),
+		default_face_name = "x_smalltfont",
+	},
+	subtitle_face = {
+		setting_suffix = "subtitle_face",
+		label = _("Subtitle"),
+		default_face_name = "xx_smallinfofont",
+	},
+	info_text_face = {
+		setting_suffix = "info_text_face",
+		label = _("Info Text"),
+		default_face_name = "x_smallinfofont",
+	},
+}
+
+local function getTitlebarSettingKeys(option)
+	return getScopedFontSettingKeys("titlebar", option.setting_suffix)
+end
+
+local function hasTitlebarFontSlotOverride(option)
+	local setting_keys = getTitlebarSettingKeys(option)
+	return G_reader_settings:readSetting(setting_keys.path) ~= nil
+end
+
+local function getTitlebarFontPath(option)
+	local setting_keys = getTitlebarSettingKeys(option)
+	return G_reader_settings:readSetting(setting_keys.path)
+		or getTitlebarFontOverridePath()
+		or getBuiltInTitlebarFontPath(option)
+end
+
+local function saveTitlebarFontSlotOverride(option, font_path, font_name)
+	saveFontOverride(getTitlebarSettingKeys(option), font_path, font_name)
+end
+
+function TitlebarWidget:init(...)
+	self.title_face_fullscreen = Font:getFace(getUIFontTargetPath(UI_FONT_OPTIONS.smallinfont), Font.sizemap.tfont)
+	self.title_face_not_fullscreen = Font:getFace(getUIFontTargetPath(UI_FONT_OPTIONS.smallinfont), Font.sizemap.tfont)
+	self.subtitle_face = Font:getFace(getUIFontTargetPath(UI_FONT_OPTIONS.smallinfont), Font.sizemap.tfont)
+	self.info_text_face = Font:getFace(getUIFontTargetPath(UI_FONT_OPTIONS.smallinfont), Font.sizemap.ffont)
+	return original_TitlebarWidget_init(self, ...)
+end
 
 --------------------------------------------------------------------------------
 -- 6. MENU INTEGRATION (Unified)
@@ -648,7 +808,7 @@ local function getMainMenuFontMenuItem()
 			{
 				text = _("Use built-in slot defaults"),
 				enabled_func = function()
-					return hasMainMenuFontOverride()
+					return MainMenuFontOverrides:hasFontOverride()
 				end,
 				callback = function(touchmenu_instance)
 					deferUIFontAction(function()
@@ -670,7 +830,7 @@ local function getMainMenuFontMenuItem()
 			restart_on_change = false,
 			return_to_parent_on_change = true,
 			mark_active_func = function(fname)
-				return hasMainMenuFontOverride() and fname == getMainMenuFontBasePath()
+				return MainMenuFontOverrides:hasFontOverride() and fname == MainMenuFontOverrides:getFontBasePath()
 			end,
 		})
 		for _, item in ipairs(font_items) do
@@ -684,8 +844,8 @@ local function getMainMenuFontMenuItem()
 		return {
 			text_func = function()
 				local display_name
-				if hasMainMenuFontOverride() then
-					display_name = getFontDisplayName(getMainMenuFontBasePath(), G_reader_settings:readSetting(MAIN_MENU_FONT_NAME_SETTING))
+				if MainMenuFontOverrides:hasFontOverride() then
+					display_name = getFontDisplayName(MainMenuFontOverrides:getFontBasePath(), G_reader_settings:readSetting(MainMenuFontOverrides.FONT_NAME_SETTING))
 				else
 					display_name = _("Built-in slot defaults")
 				end
@@ -699,16 +859,16 @@ local function getMainMenuFontMenuItem()
 		local item_table = {
 			{
 				text_func = function()
-					local inherited_path, inherited_name, uses_shared_default = getMainMenuInheritedFontPath(option)
+					local inherited_path, inherited_name, uses_shared_default = MainMenuFontOverrides:getInheritedFontPath(option.setting_suffix)
 					local label = uses_shared_default and _("Use shared main menu font: %1") or _("Use built-in default: %1")
-					return T(label, BD.wrap(getUIFontNameDisplay(inherited_path, inherited_name, not hasMainMenuFontSlotOverride(option))))
+					return T(label, BD.wrap(getUIFontNameDisplay(inherited_path, inherited_name, not MainMenuFontOverrides:hasFontSlotOverride(option.setting_suffix))))
 				end,
 				enabled_func = function()
-					return hasMainMenuFontSlotOverride(option)
+					return MainMenuFontOverrides:FontSlotOverride(option.setting_suffix)
 				end,
 				callback = function(touchmenu_instance)
 					deferUIFontAction(function()
-						clearMainMenuFontSlotOverride(option)
+						MainMenuFontOverrides:clearFontSlotOverride(option.setting_suffix)
 						UIManager:setDirty(nil, "ui")
 					end, function()
 						returnToParentMenu(touchmenu_instance)
@@ -718,7 +878,7 @@ local function getMainMenuFontMenuItem()
 			},
 		}
 
-		local setting_keys = getMainMenuFontSettingKeys(option)
+		local setting_keys = MainMenuFontOverrides:getFontSettingKeys(option.setting_suffix)
 		local font_items = getGenericFontTable(ReaderFont, {
 			setting_key_path = setting_keys.path,
 			setting_key_name = setting_keys.name,
@@ -726,7 +886,7 @@ local function getMainMenuFontMenuItem()
 			restart_on_change = false,
 			return_to_parent_on_change = true,
 			mark_active_func = function(fname)
-				return fname == getMainMenuFontPath(option)
+				return fname == MainMenuFontOverrides:getFontPath(option.setting_suffix)
 			end,
 		})
 		for _, item in ipairs(font_items) do
@@ -741,7 +901,7 @@ local function getMainMenuFontMenuItem()
 	local function getMainMenuSlotPickerItem(option)
 		return {
 			text_func = function()
-				return T(_("%1: %2"), option.label, BD.wrap(getMainMenuFontDisplay(option)))
+				return T(_("%1: %2"), option.label, BD.wrap(MainMenuFontOverrides:getFontDisplay(option.setting_suffix)))
 			end,
 			sub_item_table_func = function()
 				return buildMainMenuSlotPickerTable(option)
@@ -760,7 +920,7 @@ local function getMainMenuFontMenuItem()
 						ok_text = _("Reset"),
 						ok_callback = function()
 							deferUIFontAction(function()
-								clearMainMenuFontSlotOverrides(MAIN_MENU_FONT_OPTION_LIST)
+								MainMenuFontOverrides:clearFontSlotOverrides(MainMenuFontOverrides.options)
 							end)
 						end,
 						cancel_text = _("Cancel"),
@@ -768,9 +928,9 @@ local function getMainMenuFontMenuItem()
 				end,
 				separator = true,
 			},
-			getMainMenuSlotPickerItem(MAIN_MENU_FONT_OPTIONS.menu_item),
-			getMainMenuSlotPickerItem(MAIN_MENU_FONT_OPTIONS.page_info_text),
-			getMainMenuSlotPickerItem(MAIN_MENU_FONT_OPTIONS.time_info),
+			getMainMenuSlotPickerItem(MainMenuFontOverrides.options.menu_item),
+			getMainMenuSlotPickerItem(MainMenuFontOverrides.options.page_info_text),
+			getMainMenuSlotPickerItem(MainMenuFontOverrides.options.time_info),
 		}, buildMainMenuFontRootTable)
 	end
 
