@@ -131,10 +131,6 @@ local function getGenericFontTable(reader_font_instance, options)
 	return fonts_table
 end
 
---------------------------------------------------------------------------------
--- 2. UI FONT LOGIC
---------------------------------------------------------------------------------
-
 local function getScopedFontSettingKeys(prefix, suffix)
 	return {
 		path = prefix .. "_" .. suffix .. "_path",
@@ -155,6 +151,10 @@ local function saveFontOverride(setting_keys, font_path, font_name)
 		G_reader_settings:delSetting(setting_keys.name)
 	end
 end
+
+--------------------------------------------------------------------------------
+-- 2. UI FONT LOGIC
+--------------------------------------------------------------------------------
 
 local function flattenGroupOptions(groups)
 	local options = {}
@@ -371,7 +371,7 @@ end
 applyUIFont()
 
 --------------------------------------------------------------------------------
--- SHARED LOGIC
+-- FONT OVERRIDE CLASS (Unified logic for main menu, dictionary, and titlebar font overrides)
 --------------------------------------------------------------------------------
 
 local FontOverride = {
@@ -482,11 +482,13 @@ function FontOverride:getFontDisplay(option_key)
 	return getUIFontNameDisplay(inherited_path, inherited_name, true)
 end
 
-function FontOverride:getFace(option_key)
+function FontOverride:getFace(option_key, font_size)
+	
 	local font_path = self:getFontPath(option_key)
 	local default_face = Font:getFace(self.FONT_OPTIONS[option_key].default_face_name)
+	local font_size = font_size or default_face.orig_size
 	if font_path then
-		return Font:getFace(font_path, default_face.orig_size)
+		return Font:getFace(font_path, font_size)
 	end
 	return default_face
 end
@@ -497,8 +499,6 @@ end
 
 local TouchMenu = require("ui/widget/touchmenu")
 local original_TouchMenu_init, original_TouchMenu_updateItems
-
-
 
 local MAIN_MENU_FONT_KEY = "mainmenu"
 local MAIN_MENU_FONT_PATH_SETTING = "mainmenu_font_path"
@@ -609,96 +609,291 @@ end
 -- 4. DICTIONARY FONT LOGIC
 --------------------------------------------------------------------------------
 
-local original_instantiateScrollWidget = DictQuickLookup._instantiateScrollWidget
+local DICT_FONT_KEY = "dictquicklookup"
+local DICT_FONT_PATH_SETTING = "dictquicklookup_font_path"
+local DICT_FONT_NAME_SETTING = "dictquicklookup_font_name"
 
-function DictQuickLookup:_instantiateScrollWidget()
-	local scroll_widget = original_instantiateScrollWidget(self)
+local DICT_FONT_OPTIONS = {
+	content_face = {
+		setting_suffix = "content_face",
+		label = _("Content Font"),
+		default_face_name = "cfont",
+	},
+	image_alt_face  = {
+		setting_suffix = "image_alt_face",
+		label = _("Image Alt Font"),
+		default_face_name = "cfont",
+	},
+	word_font_face  = {
+		setting_suffix = "word_font_face",
+		label = _("Lookup Word Font"),
+		default_face_name = "tfont",
+	},
+}
 
-	local selected_font = G_reader_settings:readSetting("dict_font")
-	if not selected_font then
-		return scroll_widget
-	end
+local DictQuickLookupOverrides = FontOverride:new{
+	SETTINGS_KEY = DICT_FONT_KEY,
+	FONT_PATH_SETTING = DICT_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = DICT_FONT_NAME_SETTING,
+	FONT_OPTIONS = DICT_FONT_OPTIONS,
+}
 
-	local cre = require("document/credocument"):engineInit()
-	local font_filename = cre.getFontFaceFilenameAndFaceIndex(selected_font)
-	if not font_filename then
-		return scroll_widget
-	end
+local original_DictQuickLookup_init = DictQuickLookup.init
 
-	if self.dict_title then
-		local font_size = Font.sizemap.x_smallinfofont
-		self.dict_title.title_face = Font:getFace(font_filename, font_size)
-		self.dict_title:clear()
-		self.dict_title:init()
-		UIManager:setDirty(self.dict_title.show_parent, "ui", self.dict_title.dimen)
-	end
-
-	if self.lookup_word_text and self.lookup_word_text.face then
-		self.lookup_word_text.face = Font:getFace(font_filename, self.lookup_word_text.face.orig_size)
-		self.lookup_word_text._face_adjusted = false
-		self.lookup_word_text:free()
-	end
-
-	return scroll_widget
+function DictQuickLookup:init(...)
+	self.dict_font_size = G_reader_settings:readSetting("dict_font_size") or 20
+	self.content_face = DictQuickLookupOverrides:getFace(DictQuickLookupOverrides.FONT_OPTIONS.content_face.setting_suffix, self.dict_font_size)
+	local font_size_alt = self.dict_font_size - 4
+    if font_size_alt < 8 then
+        font_size_alt = 8
+    end
+	self.image_alt_face = DictQuickLookupOverrides:getFace(DictQuickLookupOverrides.FONT_OPTIONS.image_alt_face.setting_suffix, font_size_alt)
+	-- self.word_font_face = DictQuickLookupOverrides:getFontPath(DictQuickLookupOverrides.FONT_OPTIONS.word_font_face.setting_suffix)
+	
+	return original_DictQuickLookup_init(self, ...)
 end
 
-local original_getHtmlDictionaryCss = DictQuickLookup.getHtmlDictionaryCss
 
-function DictQuickLookup:getHtmlDictionaryCss()
-	local selected_font = G_reader_settings:readSetting("dict_font")
+-- local original_getHtmlDictionaryCss = DictQuickLookup.getHtmlDictionaryCss
 
-	if selected_font then
-		local cre = require("document/credocument"):engineInit()
-		local font_filename, font_faceindex = cre.getFontFaceFilenameAndFaceIndex(selected_font)
-		if font_filename then
-			local css_justify = G_reader_settings:nilOrTrue("dict_justify") and "text-align: justify;" or ""
-			local face_css = "@font-face { font-family: 'DictCustomFont'; src: url('" .. font_filename .. "') }\n"
-			local seen = { [font_filename] = true }
-			local variants = {
-				{ bold = false, italic = true, style = "; font-style: italic" },
-				{ bold = true, italic = false, style = "; font-weight: bold" },
-				{ bold = true, italic = true, style = "; font-weight: bold; font-style: italic" },
-			}
-			for _, v in ipairs(variants) do
-				local path = cre.getFontFaceFilenameAndFaceIndex(selected_font, v.bold, v.italic)
-				if path and not seen[path] then
-					seen[path] = true
-					face_css = face_css
-						.. "@font-face { font-family: 'DictCustomFont'; src: url('"
-						.. path
-						.. "')"
-						.. v.style
-						.. " }\n"
-				end
-			end
-			local css = face_css
-				.. [[
-                @page { margin: 0; font-family: 'DictCustomFont'; }
-                body { margin: 0; line-height: 1.3; font-family: 'DictCustomFont'; ]]
-				.. css_justify
-				.. [[ }
-                blockquote, dd { margin: 0 1em; }
-                ol, ul, menu { margin: 0; padding: 0 1.7em; }
-            ]]
-			if self.css then
-				return css .. self.css
-			end
-			return css
-		end
+-- function DictQuickLookup:getHtmlDictionaryCss()
+-- 	local selected_font = DictQuickLookupOverrides:getFontPath(DictQuickLookupOverrides.FONT_OPTIONS.word_font_face.setting_suffix)
+
+-- 	if selected_font then
+-- 		local cre = require("document/credocument"):engineInit()
+-- 		local font_filename, font_faceindex = cre.getFontFaceFilenameAndFaceIndex(selected_font)
+-- 		if font_filename then
+-- 			local css_justify = G_reader_settings:nilOrTrue("dict_justify") and "text-align: justify;" or ""
+-- 			local face_css = "@font-face { font-family: 'DictCustomFont'; src: url('" .. font_filename .. "') }\n"
+-- 			local seen = { [font_filename] = true }
+-- 			local variants = {
+-- 				{ bold = false, italic = true, style = "; font-style: italic" },
+-- 				{ bold = true, italic = false, style = "; font-weight: bold" },
+-- 				{ bold = true, italic = true, style = "; font-weight: bold; font-style: italic" },
+-- 			}
+-- 			for _, v in ipairs(variants) do
+-- 				local path = cre.getFontFaceFilenameAndFaceIndex(selected_font, v.bold, v.italic)
+-- 				if path and not seen[path] then
+-- 					seen[path] = true
+-- 					face_css = face_css
+-- 						.. "@font-face { font-family: 'DictCustomFont'; src: url('"
+-- 						.. path
+-- 						.. "')"
+-- 						.. v.style
+-- 						.. " }\n"
+-- 				end
+-- 			end
+-- 			local css = face_css
+-- 				.. [[
+--                 @page { margin: 0; font-family: 'DictCustomFont'; }
+--                 body { margin: 0; line-height: 1.3; font-family: 'DictCustomFont'; ]]
+-- 				.. css_justify
+-- 				.. [[ }
+--                 blockquote, dd { margin: 0 1em; }
+--                 ol, ul, menu { margin: 0; padding: 0 1.7em; }
+--             ]]
+-- 			if self.css then
+-- 				return css .. self.css
+-- 			end
+-- 			return css
+-- 		end
+-- 	end
+
+-- 	return original_getHtmlDictionaryCss(self)
+-- end
+
+--------------------------------------------------------------------------------
+-- InfoMessage font logic
+--------------------------------------------------------------------------------
+local InfoMessageWidget = require("ui/widget/infomessage")
+local ConfirmBoxWidget = require("ui/widget/confirmbox")
+
+local INFOMESSAGE_FONT_KEY = "infomessage"
+local INFOMESSAGE_FONT_PATH_SETTING = "infomessage_font_path"
+local INFOMESSAGE_FONT_NAME_SETTING = "infomessage_font_name"
+
+local INFOMESSAGE_FONT_OPTIONS = {
+	text_face = {
+		setting_suffix = "text_face",
+		label = _("Info Message Text"),
+		default_face_name = "infofont",
+	},
+	text_face_monospace = {
+		setting_suffix = "text_face_monospace",
+		label = _("Info Message Text (Monospace)"),
+		default_face_name = "infont",
+	},
+	confirmbox_face = {
+		setting_suffix = "confirmbox_face",
+		label = _("Confirm Box Text"),
+		default_face_name = "infofont",
+	},
+}
+
+local INFOMESSAGE_FONT_OPTIONS_LIST = {
+	INFOMESSAGE_FONT_OPTIONS.text_face,
+	INFOMESSAGE_FONT_OPTIONS.text_face_monospace,
+	INFOMESSAGE_FONT_OPTIONS.confirmbox_face,
+}
+
+local InfoMessageOverrides = FontOverride:new{
+	SETTINGS_KEY = INFOMESSAGE_FONT_KEY,
+	FONT_PATH_SETTING = INFOMESSAGE_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = INFOMESSAGE_FONT_NAME_SETTING,
+	FONT_OPTIONS = INFOMESSAGE_FONT_OPTIONS,
+	FONT_OPTION_LIST = INFOMESSAGE_FONT_OPTIONS_LIST,
+}
+
+
+local original_InfoMessageWidget_init = InfoMessageWidget.init
+function InfoMessageWidget:init(...)
+	if self.monospace_font then
+		self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.text_face_monospace.setting_suffix)
+	else
+		self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.text_face.setting_suffix)
 	end
+	return original_InfoMessageWidget_init(self, ...)
+end
 
-	return original_getHtmlDictionaryCss(self)
+local original_ConfirmBoxWidget_init = ConfirmBoxWidget.init
+function ConfirmBoxWidget:init(...)
+	self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.confirmbox_face.setting_suffix)
+	return original_ConfirmBoxWidget_init(self, ...)
 end
 
 --------------------------------------------------------------------------------
--- 5. titlebar font logic
+-- Button font logic
+--------------------------------------------------------------------------------
+local BUTTON_FONT_KEY = "button"
+local BUTTON_FONT_PATH_SETTING = "button_font_path"
+local BUTTON_FONT_NAME_SETTING = "button_font_name"
+
+local BUTTON_FONT_OPTIONS = {
+	button_face = {
+		setting_suffix = "button_face",
+		label = _("Button Text"),
+		default_face_name = "cfont",
+	},
+	menu_button_face = {
+		setting_suffix = "menu_button_face",
+		label = _("Menu Button Text"),
+		default_face_name = "smallinfofont",
+	},
+	button_dialog_title_face = {
+		setting_suffix = "button_dialog_title_face",
+		label = _("Button Dialog Title"),
+		default_face_name = "x_smalltfont",
+	},
+	button_dialog_info_face = {
+		setting_suffix = "button_dialog_info_face",
+		label = _("Button Dialog Info Text"),
+		default_face_name = "infofont",
+	},
+	button_progress_face = {
+		setting_suffix = "button_progress_face",
+		label = _("Progress Button Text"),
+		default_face_name = "infofont",
+	},
+}
+
+local BUTTON_FONT_OPTION_LIST = {
+	BUTTON_FONT_OPTIONS.button_face,
+	BUTTON_FONT_OPTIONS.menu_button_face,
+	BUTTON_FONT_OPTIONS.button_dialog_title_face,
+	BUTTON_FONT_OPTIONS.button_dialog_info_face,
+	BUTTON_FONT_OPTIONS.button_progress_face,
+}
+
+local ButtonOverrides = FontOverride:new{
+	SETTINGS_KEY = BUTTON_FONT_KEY,
+	FONT_PATH_SETTING = BUTTON_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = BUTTON_FONT_NAME_SETTING,
+	FONT_OPTIONS = BUTTON_FONT_OPTIONS,
+	FONT_OPTION_LIST = BUTTON_FONT_OPTION_LIST,
+}
+
+local ButtonWidget = require("ui/widget/button")
+local original_ButtonWidget_init = ButtonWidget.init
+function ButtonWidget:init(...)
+	if self.menu_style then
+		self.text_font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.menu_button_face.setting_suffix)
+	else
+		self.text_font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.button_face.setting_suffix)
+	end
+	return original_ButtonWidget_init(self, ...)
+end
+
+local ButtonDialogWidget = require("ui/widget/buttondialog")
+local original_ButtonDialogWidget_init = ButtonDialogWidget.init
+function ButtonDialogWidget:init(...)
+	self.title_face  = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_title_face.setting_suffix)
+	self.info_face = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_info_face.setting_suffix)
+	return original_ButtonDialogWidget_init(self, ...)
+end
+
+local ButtonProgressWidget = require("ui/widget/buttonprogresswidget")
+local original_ButtonProgressWidget_init = ButtonProgressWidget.init
+function ButtonProgressWidget:init(...)
+	self.font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.button_progress_face.setting_suffix)
+	return original_ButtonProgressWidget_init(self, ...)
+end
+
+--------------------------------------------------------------------------------
+-- Input font logic
+--------------------------------------------------------------------------------
+local INPUT_FONT_KEY = "input"
+local INPUT_FONT_PATH_SETTING = "input_font_path"
+local INPUT_FONT_NAME_SETTING = "input_font_name"
+
+local INPUT_FONT_OPTIONS = {
+	input_dialog_face = {
+		setting_suffix = "input_dialog_face",
+		label = _("Input Text"),
+		default_face_name = "x_smallinfofont",
+	},
+	input_text_face = {
+		setting_suffix = "input_text_face",
+		label = _("Input Text"),
+		default_face_name = "smallinfofont",
+	},
+}
+
+local INPUT_FONT_OPTION_LIST = {
+	INPUT_FONT_OPTIONS.input_dialog_face,
+	INPUT_FONT_OPTIONS.input_text_face,
+}
+
+local InputOverrides = FontOverride:new{
+	SETTINGS_KEY = INPUT_FONT_KEY,
+	FONT_PATH_SETTING = INPUT_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = INPUT_FONT_NAME_SETTING,
+	FONT_OPTIONS = INPUT_FONT_OPTIONS,
+	FONT_OPTION_LIST = INPUT_FONT_OPTION_LIST,
+}
+
+local InputDialogWidget = require("ui/widget/inputdialog")
+local original_InputDialogWidget_init = InputDialogWidget.init
+function InputDialogWidget:init(...)
+	self.input_face = InputOverrides:getFace(InputOverrides.FONT_OPTIONS.input_dialog_face.setting_suffix)
+	return original_InputDialogWidget_init(self, ...)
+end
+
+local InputTextWidget = require("ui/widget/inputtext")
+local original_InputTextWidget_init = InputTextWidget.init
+function InputTextWidget:init(...)
+	self.input_face = InputOverrides:getFace(InputOverrides.FONT_OPTIONS.input_text_face.setting_suffix)
+	return original_InputTextWidget_init(self, ...)
+end
+
+--------------------------------------------------------------------------------
+-- titlebar font logic
 --------------------------------------------------------------------------------
 local TitlebarWidget = require("ui/widget/titlebar")
 local original_TitlebarWidget_init = TitlebarWidget.init
 
 local TITLEBAR_FONT_KEY = "titlebar"
-TITLEBAR_FONT_PATH_SETTING = "titlebar_font_path"
-TITLEBAR_FONT_NAME_SETTING = "titlebar_font_name"
+local TITLEBAR_FONT_PATH_SETTING = "titlebar_font_path"
+local TITLEBAR_FONT_NAME_SETTING = "titlebar_font_name"
 
 local TITLEBAR_FONT_OPTIONS = {
 	title_face_fullscreen = {
@@ -1126,7 +1321,12 @@ local function patchSettingsMenu(menu, order)
 					menu_text = _("Main menu fonts")}),
 				getFontMenuSubsection(TitlebarOverrides, {
 					menu_text = _("Titlebar Widget fonts")}),
-				getDictionaryFontMenuItem(),
+				getFontMenuSubsection(DictQuickLookupOverrides, {
+					menu_text = _("Dictionary fonts")}),
+				getFontMenuSubsection(InfoMessageOverrides, {
+					menu_text = _("Info Message & Confirm Box fonts")}),
+				getFontMenuSubsection(ButtonOverrides, {
+					menu_text = _("Button fonts")}),
 			}
 		end,
 	}
