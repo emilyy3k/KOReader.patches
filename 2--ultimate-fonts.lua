@@ -1,5 +1,5 @@
 local logger = require("logger")
-logger.info("Applying custom UI fonts patch")
+logger.info("ULTIMATE-FONTS: Applying custom UI fonts patch")
 
 local ReaderFont = require("apps/reader/modules/readerfont")
 local Font = require("ui/font")
@@ -1003,7 +1003,196 @@ local CoverBrowserOverrides = FontOverride:new{
 	FONT_OPTION_LIST = COVERBROWSER_FONT_OPTION_LIST,
 }
 
-local function patchCoverBrowser(plugin)
+local function patchCoverBrowserMosaicView(plugin)
+	local MosaicMenu = require("mosaicmenu")
+
+	local build_ui = MosaicMenu and MosaicMenu._updateItemsBuildUI
+	if not build_ui then return end
+
+	local MosaicMenuItem = userpatch.getUpValue(build_ui, "MosaicMenuItem")
+	if not MosaicMenuItem then return end
+	if MosaicMenuItem._fontpatch_applied then return end
+	MosaicMenuItem._fontpatch_applied = true
+	logger.info("Ultimate Fonts: initializing Mosaic Menu item font override patch")
+	local original_update = MosaicMenuItem.update
+	local FakeCover = userpatch.getUpValue(build_ui, "FakeCover")
+		or userpatch.getUpValue(original_update, "FakeCover")
+	if not FakeCover then
+		logger.info("Ultimate Fonts: FakeCover upvalue not found in MosaicMenu hooks")
+	end
+
+	if FakeCover and FakeCover.init and not FakeCover._fontpatch_applied then
+		FakeCover._fontpatch_applied = true
+		local original_fakecover_init = FakeCover.init
+		function FakeCover:init(...)
+			logger.info("Ultimate Fonts: initializing FakeCover with font overrides")
+			local CenterContainer = require("ui/widget/container/centercontainer")
+			local orig_centercontainer_new = CenterContainer.new
+			
+			local authors = self.authors
+			local title = self.title
+			local filename = self.filename
+
+			local function rebuildWidget(widget, option_key, font_size)
+				if not widget then return end
+				local cur_face = widget.face
+				local resolved
+				if option_key then
+					local font_options = CoverBrowserOverrides.FONT_OPTIONS
+					local option_entry = font_options and font_options[option_key]
+					if option_entry and option_entry.setting_suffix then
+						resolved = CoverBrowserOverrides:getFontPath(option_entry.setting_suffix)
+					elseif type(option_key) == "string" then
+						resolved = CoverBrowserOverrides:getFontPath(option_key) or option_key
+					end
+				else
+					resolved = cur_face and cur_face.ftname
+				end
+				local new_size = font_size or (cur_face and cur_face.orig_size) or 18
+				if resolved == (cur_face and cur_face.ftname)
+					and new_size == (cur_face and cur_face.orig_size) then return end
+				local new_face = resolved and Font:getFace(resolved, new_size)
+				if not new_face or new_face == cur_face then return end
+				widget.face = new_face
+				widget:free(true)
+				widget:init()
+			end
+
+			local authors_idx = 1
+			local title_idx = 1
+			local filename_idx = 1
+
+			if authors and type(authors) == "string" then
+				title_idx = title_idx + 1
+				filename_idx = filename_idx + 1
+			end
+			if title and type(title) == "string" then
+				filename_idx = filename_idx + 1
+			end
+
+			local authors_widget = nil
+			local title_widget = nil
+			local filename_widget = nil
+
+			CenterContainer.new = function(klass, t, ...)
+				local container = orig_centercontainer_new(klass, t, ...)
+				if t and t[1] then
+					if authors and type(authors) == "string" and t[authors_idx*2] then
+						authors_widget = t[authors_idx*2]
+					end
+					if title and type(title) == "string" and t[title_idx*2] then
+						title_widget = t[title_idx*2]
+					end
+					if filename and type(filename) == "string" and t[filename_idx*2] then
+						filename_widget = t[filename_idx*2]
+					end
+				end
+				return container
+			end
+
+			local ok, err = pcall(original_fakecover_init, self, ...)
+			CenterContainer.new = orig_centercontainer_new
+			if not ok then
+				error(err)
+			end
+
+			if authors_widget and authors_widget.text then
+				rebuildWidget(authors_widget, CoverBrowserOverrides.FONT_OPTIONS.book_authors_font.setting_suffix)
+			end
+			if title_widget and title_widget.text then
+				rebuildWidget(title_widget, CoverBrowserOverrides.FONT_OPTIONS.book_title_font.setting_suffix)
+			end
+			if filename_widget and filename_widget.text then
+				rebuildWidget(filename_widget, CoverBrowserOverrides.FONT_OPTIONS.folder_title_font.setting_suffix)
+			end
+
+		end
+	end
+
+	function MosaicMenuItem:update(...)
+		local BottomContainer = require("ui/widget/container/bottomcontainer")
+		local TextBoxWidget = require("ui/widget/textboxwidget")
+
+		local captured_bookinfo = { wtitle = nil, wauthors = nil }
+		local captured_dir = nil
+
+		local orig_BC_new = BottomContainer.new
+		local orig_TBW_new = TextBoxWidget.new
+
+		BottomContainer.new = function(klass, t, ...)
+			local bc = orig_BC_new(klass, t, ...)
+			if self.is_directory and not captured_dir and t and t[1]
+				and type(t[1].text) == "string" and t[1].width and t[1].width > 5 then
+				captured_dir = t[1]
+			end
+			return bc
+		end
+
+		TextBoxWidget.new = function(klass, t, ...)
+			local widget = orig_TBW_new(klass, t, ...)
+			if not self.is_directory
+				and t and type(t.text) == "string" and t.width and t.width > 5 then
+				if not captured_bookinfo.wtitle then
+					captured_bookinfo.wtitle = widget
+				elseif not captured_bookinfo.wauthors then
+					captured_bookinfo.wauthors = widget
+				end
+			end
+			return widget
+		end
+
+		original_update(self, ...)
+
+		BottomContainer.new = orig_BC_new
+		TextBoxWidget.new = orig_TBW_new
+
+		local function rebuildWidget(widget, option_key, font_size)
+			if not widget then return end
+			local cur_face = widget.face
+			local resolved
+			if option_key then
+				local font_options = CoverBrowserOverrides.FONT_OPTIONS
+				local option_entry = font_options and font_options[option_key]
+				if option_entry and option_entry.setting_suffix then
+					resolved = CoverBrowserOverrides:getFontPath(option_entry.setting_suffix)
+				elseif type(option_key) == "string" then
+					resolved = CoverBrowserOverrides:getFontPath(option_key) or option_key
+				end
+			else
+				resolved = cur_face and cur_face.ftname
+			end
+			local new_size = font_size or (cur_face and cur_face.orig_size) or 18
+			if resolved == (cur_face and cur_face.ftname)
+				and new_size == (cur_face and cur_face.orig_size) then return end
+			local new_face = resolved and Font:getFace(resolved, new_size)
+			if not new_face or new_face == cur_face then return end
+			widget.face = new_face
+			widget:free(true)
+			widget:init()
+		end
+
+		if not self.is_directory and (captured_bookinfo.wtitle or captured_bookinfo.wauthors) then
+			local book_title_font_path = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_title_font.setting_suffix)
+			local book_authors_font_path = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_authors_font.setting_suffix)
+			if book_title_font_path then
+				rebuildWidget(captured_bookinfo.wtitle, book_title_font_path)
+			end
+			if book_authors_font_path then
+				rebuildWidget(captured_bookinfo.wauthors, book_authors_font_path)
+			end
+		end
+
+		if captured_dir and self.is_directory then
+			local fp = CoverBrowserOverrides.FONT_OPTIONS.folder_title_font.setting_suffix
+			local folder_font_path = CoverBrowserOverrides:getFontPath(fp)
+			if folder_font_path then
+				rebuildWidget(captured_dir, folder_font_path)
+			end
+		end
+	end
+end
+
+local function patchCoverBrowserListView(plugin)
 	local BookInfoManager = require("bookinfomanager")
     local ListMenu = require("listmenu")
 
@@ -1099,7 +1288,8 @@ local function patchCoverBrowser(plugin)
     end
 end
 
-userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowserListView)
+userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowserMosaicView)
 --------------------------------------------------------------------------------
 -- MENU INTEGRATION (Unified)
 --------------------------------------------------------------------------------
