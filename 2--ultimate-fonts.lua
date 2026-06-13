@@ -14,6 +14,7 @@ local InfoMessage = require("ui/widget/infomessage")
 local DictQuickLookup = require("ui/widget/dictquicklookup")
 local FileManagerMenu = require("apps/filemanager/filemanagermenu")
 local ReaderMenu = require("apps/reader/modules/readermenu")
+local userpatch = require("userpatch")
 local INHERITED_MENU_PREFIX = "\u{2592}\u{200A}"
 
 local function showUIFontRestartPrompt()
@@ -394,8 +395,31 @@ function FontOverride:new (o)
 	return o
 end
 
+function FontOverride:getFontOption(option_key)
+	if not option_key then
+		return nil
+	end
+
+	local option = self.FONT_OPTIONS and self.FONT_OPTIONS[option_key]
+	if option then
+		return option
+	end
+
+	if type(option_key) == "string" and self.FONT_OPTIONS then
+		for _, candidate in pairs(self.FONT_OPTIONS) do
+			if candidate.setting_suffix == option_key then
+				return candidate
+			end
+		end
+	end
+
+	return nil
+end
+
 function FontOverride:getFontSettingKeys(option_key)
-	return getScopedFontSettingKeys(self.SETTINGS_KEY, self.FONT_OPTIONS[option_key].setting_suffix)
+	local option = self:getFontOption(option_key)
+	local setting_suffix = option and option.setting_suffix or option_key
+	return getScopedFontSettingKeys(self.SETTINGS_KEY, setting_suffix)
 end
 
 function FontOverride:getFontOverridePath()
@@ -411,7 +435,8 @@ function FontOverride:getFontBasePath()
 end
 
 function FontOverride:getDefaultFontPath(option_key)
-	return getRegularFontPath(Font.fontmap[self.FONT_OPTIONS[option_key].default_face_name])
+	local option = self:getFontOption(option_key)
+	return option and getRegularFontPath(Font.fontmap[option.default_face_name]) or nil
 end
 
 function FontOverride:hasFontSlotOverride(option_key)
@@ -485,7 +510,11 @@ end
 function FontOverride:getFace(option_key, font_size)
 	
 	local font_path = self:getFontPath(option_key)
-	local default_face = Font:getFace(self.FONT_OPTIONS[option_key].default_face_name)
+	local option = self:getFontOption(option_key)
+	local default_face = option and Font:getFace(option.default_face_name)
+	if not default_face then
+		return font_path and Font:getFace(font_path, font_size) or nil
+	end
 	local font_size = font_size or default_face.orig_size
 	if font_path then
 		return Font:getFace(font_path, font_size)
@@ -494,7 +523,7 @@ function FontOverride:getFace(option_key, font_size)
 end
 
 --------------------------------------------------------------------------------
--- 3. MAIN MENU FONT LOGIC
+-- MAIN MENU FONT LOGIC
 --------------------------------------------------------------------------------
 
 local TouchMenu = require("ui/widget/touchmenu")
@@ -606,7 +635,7 @@ function TouchMenu:updateItems(...)
 end
 
 --------------------------------------------------------------------------------
--- 4. DICTIONARY FONT LOGIC
+-- DICTIONARY FONT LOGIC
 --------------------------------------------------------------------------------
 
 local DICT_FONT_KEY = "dictquicklookup"
@@ -935,7 +964,144 @@ function TitlebarWidget:init(...)
 end
 
 --------------------------------------------------------------------------------
--- 6. MENU INTEGRATION (Unified)
+-- Book List Menu font logic
+--------------------------------------------------------------------------------
+
+local COVERBROWSER_FONT_KEY = "coverbrowser"
+local COVERBROWSER_FONT_PATH_SETTING = "coverbrowser_font_path"
+local COVERBROWSER_FONT_NAME_SETTING = "coverbrowser_font_name"
+
+local COVERBROWSER_FONT_OPTIONS = {
+	folder_title_font = {
+		setting_suffix = "folder_title_font",
+		label = _("Folder Title"),
+		default_face_name = "cfont",
+	},
+	book_title_font = {
+		setting_suffix = "book_title_font",
+		label = _("Book Title"),
+		default_face_name = "cfont",
+	},
+	book_authors_font = {
+		setting_suffix = "book_authors_font",
+		label = _("Book Authors"),
+		default_face_name = "cfont",
+	},
+}
+
+local COVERBROWSER_FONT_OPTION_LIST = {
+	COVERBROWSER_FONT_OPTIONS.folder_title_font,
+	COVERBROWSER_FONT_OPTIONS.book_title_font,
+	COVERBROWSER_FONT_OPTIONS.book_authors_font,
+}
+
+local CoverBrowserOverrides = FontOverride:new{
+	SETTINGS_KEY = COVERBROWSER_FONT_KEY,
+	FONT_PATH_SETTING = COVERBROWSER_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = COVERBROWSER_FONT_NAME_SETTING,
+	FONT_OPTIONS = COVERBROWSER_FONT_OPTIONS,
+	FONT_OPTION_LIST = COVERBROWSER_FONT_OPTION_LIST,
+}
+
+local function patchCoverBrowser(plugin)
+	local BookInfoManager = require("bookinfomanager")
+    local ListMenu = require("listmenu")
+
+    local ListMenuItem = userpatch.getUpValue(ListMenu._updateItemsBuildUI, "ListMenuItem")
+    if not ListMenuItem then return end
+    if ListMenuItem._fontpatch_applied then return end
+    ListMenuItem._fontpatch_applied = true
+
+    local original_update = ListMenuItem.update
+
+    function ListMenuItem:update(...)
+        local VerticalGroup = require("ui/widget/verticalgroup")
+        local TextBoxWidget = require("ui/widget/textboxwidget")
+
+        -- captured_bookinfo: { vgroup, wtitle, wauthors } — bookinfo path
+        -- captured_dir:      first wide TextBoxWidget created for directories (wleft)
+        -- captured_filename: last  wide TextBoxWidget created for files without bookinfo
+        --                    (the repeat-loop creates several; the last one is the keeper)
+        local captured_bookinfo = nil
+        local captured_dir      = nil
+
+        local orig_VG_new  = VerticalGroup.new
+        local orig_TBW_new = TextBoxWidget.new
+
+        VerticalGroup.new = function(klass, t, ...)
+            local vg = orig_VG_new(klass, t, ...)
+            if not captured_bookinfo and t and t[1] and type(t[1].text) == "string"
+                and t[1].width and t[1].width > 100 then
+                captured_bookinfo = { vgroup = vg, wtitle = t[1], wauthors = t[2] }
+            end
+            return vg
+        end
+
+        TextBoxWidget.new = function(klass, t, ...)
+            local widget = orig_TBW_new(klass, t, ...)
+            if t and type(t.text) == "string" and t.width and t.width > 100 then
+                if self.is_directory and not captured_dir then
+                    captured_dir = widget
+                end
+            end
+            return widget
+        end
+
+        original_update(self, ...)
+        VerticalGroup.new = orig_VG_new
+        TextBoxWidget.new = orig_TBW_new
+
+        -- Rebuild a TextBoxWidget with a new font path/size.
+        local function rebuildWidget(widget, option_key, font_size, want_bold, want_italic)
+            if not widget then return end
+            local cur_face = widget.face
+            local resolved
+            if option_key then
+				local font_options = CoverBrowserOverrides.FONT_OPTIONS
+				local option_entry = font_options and font_options[option_key]
+				if option_entry and option_entry.setting_suffix then
+					resolved = CoverBrowserOverrides:getFontPath(option_entry.setting_suffix)
+				elseif type(option_key) == "string" then
+					-- Backward-compatible: accept a setting suffix or a fully resolved font path.
+					resolved = CoverBrowserOverrides:getFontPath(option_key) or option_key
+				end
+            else
+                resolved = cur_face and cur_face.ftname
+            end
+            local new_size = font_size or (cur_face and cur_face.orig_size) or 18
+            if resolved == (cur_face and cur_face.ftname)
+                and new_size == (cur_face and cur_face.orig_size) then return end
+            local new_face = resolved and Font:getFace(resolved, new_size)
+            if not new_face or new_face == cur_face then return end
+            widget.face = new_face
+            widget:free(true)
+            widget:init()
+        end
+
+        -- Bookinfo found: apply title + authors fonts
+        if captured_bookinfo and self.bookinfo_found and not self.is_directory then
+            local book_title_font_path = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_title_font.setting_suffix)
+            local book_authors_font_path = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_authors_font.setting_suffix)
+            if book_title_font_path or book_authors_font_path then
+                rebuildWidget(captured_bookinfo.wtitle,   book_title_font_path)
+                rebuildWidget(captured_bookinfo.wauthors, book_authors_font_path)
+            end
+        end
+
+        -- Directory: apply folder font
+        if captured_dir and self.is_directory then
+            local fp = CoverBrowserOverrides.FONT_OPTIONS.folder_title_font.setting_suffix
+			local folder_font_path = CoverBrowserOverrides:getFontPath(fp)
+            if folder_font_path then
+                rebuildWidget(captured_dir, folder_font_path)
+            end
+        end
+    end
+end
+
+userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+--------------------------------------------------------------------------------
+-- MENU INTEGRATION (Unified)
 --------------------------------------------------------------------------------
 
 local function getFontMenuSubsection(override, labels)
@@ -1327,6 +1493,8 @@ local function patchSettingsMenu(menu, order)
 					menu_text = _("Info Message & Confirm Box fonts")}),
 				getFontMenuSubsection(ButtonOverrides, {
 					menu_text = _("Button fonts")}),
+				getFontMenuSubsection(CoverBrowserOverrides, {
+					menu_text = _("Cover Browser fonts")}),
 			}
 		end,
 	}
