@@ -15,6 +15,7 @@ local DictQuickLookup = require("ui/widget/dictquicklookup")
 local FileManagerMenu = require("apps/filemanager/filemanagermenu")
 local ReaderMenu = require("apps/reader/modules/readermenu")
 local userpatch = require("userpatch")
+
 local INHERITED_MENU_PREFIX = "\u{2592}\u{200A}"
 
 local function showUIFontRestartPrompt()
@@ -623,12 +624,14 @@ local function applyMainMenuFontToTouchMenu(touchmenu)
 end
 
 original_TouchMenu_init = TouchMenu.init
+---@diagnostic disable-next-line: duplicate-set-field
 function TouchMenu:init(...)
 	applyMainMenuFontToTouchMenu(self)
 	return original_TouchMenu_init(self, ...)
 end
 
 original_TouchMenu_updateItems = TouchMenu.updateItems
+---@diagnostic disable-next-line: duplicate-set-field
 function TouchMenu:updateItems(...)
 	applyMainMenuFontToTouchMenu(self)
 	return original_TouchMenu_updateItems(self, ...)
@@ -668,6 +671,7 @@ local DictQuickLookupOverrides = FontOverride:new{
 }
 
 local original_DictQuickLookup_init = DictQuickLookup.init
+---@diagnostic disable-next-line: duplicate-set-field
 
 function DictQuickLookup:init(...)
 	self.dict_font_size = G_reader_settings:readSetting("dict_font_size") or 20
@@ -775,6 +779,7 @@ local InfoMessageOverrides = FontOverride:new{
 
 
 local original_InfoMessageWidget_init = InfoMessageWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function InfoMessageWidget:init(...)
 	if self.monospace_font then
 		self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.text_face_monospace.setting_suffix)
@@ -785,6 +790,7 @@ function InfoMessageWidget:init(...)
 end
 
 local original_ConfirmBoxWidget_init = ConfirmBoxWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ConfirmBoxWidget:init(...)
 	self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.confirmbox_face.setting_suffix)
 	return original_ConfirmBoxWidget_init(self, ...)
@@ -843,6 +849,7 @@ local ButtonOverrides = FontOverride:new{
 
 local ButtonWidget = require("ui/widget/button")
 local original_ButtonWidget_init = ButtonWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ButtonWidget:init(...)
 	if self.menu_style then
 		self.text_font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.menu_button_face.setting_suffix)
@@ -854,6 +861,7 @@ end
 
 local ButtonDialogWidget = require("ui/widget/buttondialog")
 local original_ButtonDialogWidget_init = ButtonDialogWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ButtonDialogWidget:init(...)
 	self.title_face  = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_title_face.setting_suffix)
 	self.info_face = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_info_face.setting_suffix)
@@ -862,6 +870,7 @@ end
 
 local ButtonProgressWidget = require("ui/widget/buttonprogresswidget")
 local original_ButtonProgressWidget_init = ButtonProgressWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ButtonProgressWidget:init(...)
 	self.font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.button_progress_face.setting_suffix)
 	return original_ButtonProgressWidget_init(self, ...)
@@ -902,6 +911,7 @@ local InputOverrides = FontOverride:new{
 
 local InputDialogWidget = require("ui/widget/inputdialog")
 local original_InputDialogWidget_init = InputDialogWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function InputDialogWidget:init(...)
 	self.input_face = InputOverrides:getFace(InputOverrides.FONT_OPTIONS.input_dialog_face.setting_suffix)
 	return original_InputDialogWidget_init(self, ...)
@@ -909,6 +919,7 @@ end
 
 local InputTextWidget = require("ui/widget/inputtext")
 local original_InputTextWidget_init = InputTextWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function InputTextWidget:init(...)
 	self.input_face = InputOverrides:getFace(InputOverrides.FONT_OPTIONS.input_text_face.setting_suffix)
 	return original_InputTextWidget_init(self, ...)
@@ -955,6 +966,7 @@ local TitlebarOverrides = FontOverride:new{
 }
 
 
+---@diagnostic disable-next-line: duplicate-set-field
 function TitlebarWidget:init(...)
 	self.title_face_fullscreen = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.title_face_fullscreen.setting_suffix)
 	self.title_face_not_fullscreen = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.title_face_not_fullscreen.setting_suffix)
@@ -962,6 +974,184 @@ function TitlebarWidget:init(...)
 	self.info_text_face = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.info_text_face.setting_suffix)
 	return original_TitlebarWidget_init(self, ...)
 end
+
+--------------------------------------------------------------------------------
+-- Simple UI font logic
+--------------------------------------------------------------------------------
+
+local SIMPLE_UI_FONT_KEY = "coverbrowser"
+local SIMPLE_UI_FONT_PATH_SETTING = "coverbrowser_font_path"
+local SIMPLE_UI_FONT_NAME_SETTING = "coverbrowser_font_name"
+
+local SIMPLE_UI_FONT_OPTIONS = {
+	coverdeck_title_font = {
+		setting_suffix = "coverdeck_title_font",
+		label = _("Coverdeck Title"),
+		default_face_name = "cfont",
+	},
+	coverdeck_info_font = {
+		setting_suffix = "coverdeck_info_font",
+		label = _("Coverdeck Info"),
+		default_face_name = "cfont",
+	},
+}
+
+local SIMPLE_UI_FONT_OPTION_LIST = {
+	SIMPLE_UI_FONT_OPTIONS.coverdeck_title_font,
+	SIMPLE_UI_FONT_OPTIONS.coverdeck_info_font,
+}
+
+local SimpleUIOverrides = FontOverride:new{
+	SETTINGS_KEY = SIMPLE_UI_FONT_KEY,
+	FONT_PATH_SETTING = SIMPLE_UI_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = SIMPLE_UI_FONT_NAME_SETTING,
+	FONT_OPTIONS = SIMPLE_UI_FONT_OPTIONS,
+	FONT_OPTION_LIST = SIMPLE_UI_FONT_OPTION_LIST,
+}
+
+local function patchSimpleUI(plugin)
+	local CoverDeck = require("desktop_modules/module_coverdeck")
+	local SUIStyle = require(("sui_style"))
+	local SUISettings = require("sui_store")
+	local UI = require("sui_core")
+
+	
+
+	local orig_build = CoverDeck.build
+
+	local FontObj = userpatch.getUpValue(orig_build, "Font")
+
+	---@diagnostic disable-next-line: duplicate-set-field
+	CoverDeck.build = function(w, ctx)
+		local pfx = ctx.pfx or ""
+
+		
+
+		-- Extract info from ctx to calculate font sizes (matches M.build)
+		local c = ctx.cfg and ctx.cfg.coverdeck
+		local scale = c and c.scale or 1
+		local lbl_scale = c and c.lbl_scale or 1
+		local title_fs = math.max(8, math.floor(SUIStyle.FS_TITLE * scale * lbl_scale))
+		local info_fs = math.max(7, math.floor(SUIStyle.FS_DETAIL * scale * lbl_scale))
+		FontObj.getFace = function(_, font_name, font_size)
+			local option_key = nil
+			if font_size == title_fs then
+				option_key = SimpleUIOverrides.FONT_OPTIONS.coverdeck_title_font.setting_suffix
+			elseif font_size == info_fs then
+				option_key = SimpleUIOverrides.FONT_OPTIONS.coverdeck_info_font.setting_suffix
+			end
+
+			if option_key then
+				return SimpleUIOverrides:getFace(option_key, font_size)
+			else
+				return Font:getFace(font_name, font_size)
+			end
+		end
+
+		local result = orig_build(w, ctx)
+
+		return result
+	end
+		
+	-- 	if not result then return result end
+		
+	-- 	-- Check if custom fonts are actually set
+	-- 	local title_font = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_title_font.setting_suffix)
+	-- 	local stats_font = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_info_font.setting_suffix)
+	-- 	local needs_patch = (title_font ~= SUIStyle.FACE_REGULAR) or (stats_font ~= SUIStyle.FACE_REGULAR)
+		
+	-- 	-- if not needs_patch then
+	-- 	-- 	return result  -- No custom fonts, return unmodified
+	-- 	-- end
+		
+	-- 	-- result is a FrameContainer; result[1] is the VerticalGroup (final_vg)
+	-- 	local vg = result[1]
+	-- 	if not vg or not vg[1] then return result end
+		
+	-- 	-- Get theme colors (same as in original M.build)
+	-- 	local ok_ss, themeStyle = pcall(require, "sui_style")
+	-- 	local CLR_TEXT_EFF = ok_ss and themeStyle and themeStyle.getThemeColor("fg")
+	-- 		or require("ffi/blitbuffer").COLOR_BLACK
+	-- 	local CLR_TEXT_SUB_EFF = ok_ss and themeStyle and themeStyle.getThemeColor("text_secondary")
+	-- 		or CLR_TEXT_EFF or UI.CLR_TEXT_SUB
+		
+	-- 	-- Extract info from ctx to calculate font sizes (matches M.build)
+	-- 	local c = ctx.cfg and ctx.cfg.coverdeck
+	-- 	local scale = c and c.scale or 1
+	-- 	local lbl_scale = c and c.lbl_scale or 1
+	-- 	local title_fs = math.floor(SUIStyle.FS_TITLE * scale * lbl_scale)
+	-- 	local info_fs = math.floor(SUIStyle.FS_DETAIL * scale * lbl_scale)
+		
+	-- 	-- Create new font faces with custom fonts
+	-- 	local face_title = Font:getFace(title_font, math.max(8, title_fs))
+	-- 	local face_info = Font:getFace(stats_font, math.max(7, info_fs))
+		
+	-- 	-- If M.build has been patched to store widget references, use them
+	-- 	-- (requires adding these two lines at end of M.build before return:
+	-- 	--   result._coverdeck_title_widget = title_widget
+	-- 	--   result._coverdeck_stats_widget = stats_w
+		
+	-- 	if title_font ~= SUIStyle.FACE_REGULAR then
+	-- 		-- local old_title = result._coverdeck_title_widget
+	-- 		-- local title_text = old_title._text or (old_title._inner and old_title._inner._text) or ""
+	-- 		local inner_w = result.dimen and result.dimen.w or 200
+			
+	-- 		local new_title = UI.makeColoredText{
+	-- 			text = "Poop ass shit",---title_text,
+	-- 			face = face_title,
+	-- 			bold = true,
+	-- 			fgcolor = CLR_TEXT_EFF,
+	-- 			width = inner_w,
+	-- 			alignment = "center",
+	-- 		}
+			
+	-- 		-- Find and replace in the parent container
+	-- 		local vg = result[1]
+	-- 		for i, child in ipairs(vg) do
+	-- 			if child == old_title then
+	-- 				vg[i] = new_title
+	-- 				result._coverdeck_title_widget = new_title
+	-- 				break
+	-- 			end
+	-- 		end
+	-- 	end
+		
+	-- 	if result._coverdeck_stats_widget and stats_font ~= SUIStyle.FACE_REGULAR then
+	-- 		local old_stats = result._coverdeck_stats_widget
+	-- 		local stats_text = old_stats._text or (old_stats._inner and old_stats._inner._text) or ""
+	-- 		local inner_w = result.dimen and result.dimen.w or 200
+			
+	-- 		local new_stats = UI.makeColoredText{
+	-- 			text = stats_text,
+	-- 			face = face_info,
+	-- 			fgcolor = CLR_TEXT_SUB_EFF,
+	-- 			width = inner_w,
+	-- 			alignment = "center",
+	-- 		}
+			
+	-- 		-- Find and replace in the parent container (meta VerticalGroup)
+	-- 		local vg = result[1]
+	-- 		for i, child in ipairs(vg) do
+	-- 			if type(child) == "table" and child[1] then
+	-- 				-- This might be the meta group
+	-- 				for j, meta_child in ipairs(child) do
+	-- 					if meta_child == old_stats then
+	-- 						child[j] = new_stats
+	-- 						result._coverdeck_stats_widget = new_stats
+	-- 						goto done
+	-- 					end
+	-- 				end
+	-- 			end
+	-- 		end
+	-- 		::done::
+		
+		
+	-- 	end
+	-- return result
+	-- end
+end
+
+userpatch.registerPatchPluginFunc("simpleui", patchSimpleUI)
 
 --------------------------------------------------------------------------------
 -- Book List Menu font logic
@@ -1100,6 +1290,7 @@ local function patchCoverBrowser(plugin)
 end
 
 userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+
 --------------------------------------------------------------------------------
 -- MENU INTEGRATION (Unified)
 --------------------------------------------------------------------------------
@@ -1495,6 +1686,8 @@ local function patchSettingsMenu(menu, order)
 					menu_text = _("Button fonts")}),
 				getFontMenuSubsection(CoverBrowserOverrides, {
 					menu_text = _("Cover Browser fonts")}),
+				getFontMenuSubsection(SimpleUIOverrides, {
+					menu_text = _("Simple UI fonts")}),
 			}
 		end,
 	}
@@ -1505,12 +1698,14 @@ local function patchSettingsMenu(menu, order)
 end
 
 local original_FileManagerMenu_setUpdateItemTable = FileManagerMenu.setUpdateItemTable
+---@diagnostic disable-next-line: duplicate-set-field
 function FileManagerMenu:setUpdateItemTable()
 	patchSettingsMenu(self, require("ui/elements/filemanager_menu_order"))
 	original_FileManagerMenu_setUpdateItemTable(self)
 end
 
 local original_ReaderMenu_setUpdateItemTable = ReaderMenu.setUpdateItemTable
+---@diagnostic disable-next-line: duplicate-set-field
 function ReaderMenu:setUpdateItemTable()
 	patchSettingsMenu(self, require("ui/elements/reader_menu_order"))
 	original_ReaderMenu_setUpdateItemTable(self)
