@@ -994,11 +994,17 @@ local SIMPLE_UI_FONT_OPTIONS = {
 		label = _("Coverdeck Info"),
 		default_face_name = "cfont",
 	},
+	bottom_tab_font = {
+		setting_suffix = "bottom_tab_font",
+		label = _("Bottom Bar Tabs"),
+		default_face_name = "cfont",
+	},
 }
 
 local SIMPLE_UI_FONT_OPTION_LIST = {
 	SIMPLE_UI_FONT_OPTIONS.coverdeck_title_font,
 	SIMPLE_UI_FONT_OPTIONS.coverdeck_info_font,
+	SIMPLE_UI_FONT_OPTIONS.bottom_tab_font,
 }
 
 local SimpleUIOverrides = FontOverride:new{
@@ -1011,19 +1017,18 @@ local SimpleUIOverrides = FontOverride:new{
 
 local function patchSimpleUI(plugin)
 	local CoverDeck = require("desktop_modules/module_coverdeck")
+	local BottomBar = require("sui_bottombar")
 	local SUIStyle = require(("sui_style"))
 	local SUISettings = require("sui_store")
 	local UI = require("sui_core")
 
-	
-
-	local orig_build = CoverDeck.build
+	local orig_CoverDeck_build = CoverDeck.build
 
 	---@diagnostic disable-next-line: duplicate-set-field
 	CoverDeck.build = function(w, ctx)
 		local pfx = ctx.pfx or ""
 
-		local result = orig_build(w, ctx)
+		local result = orig_CoverDeck_build(w, ctx)
 	
 		if not result then return result end
 		
@@ -1076,7 +1081,7 @@ local function patchSimpleUI(plugin)
 						width = inner_w,
 						alignment = "center",
 					}
-					result[1][i]._inner = new_title
+					result[1][i] = new_title
 					---logger.info("Ultimate Fonts: Replacing title widget child is: ", child._inner)
 					break
 				end
@@ -1093,17 +1098,17 @@ local function patchSimpleUI(plugin)
 					
 					for j, meta_child in ipairs(child) do
 						if meta_child._inner and meta_child._inner.bold ~= true and meta_child._inner.face and meta_child._inner.face.size == info_fs then
-							logger.info("Ultimate Fonts: Replacing stats widget child is: ", result[1][i][j]._inner)
+							--logger.info("Ultimate Fonts: Replacing stats widget child is: ", result[1][i][j]._inner)
 							local inner_w = meta_child._inner.width or 200
-							logger.info("Ultimate Fonts: Stats widget inner width is: ", inner_w)
+							--logger.info("Ultimate Fonts: Stats widget inner width is: ", inner_w)
 							local new_stats = UI.makeColoredText{
 								text = meta_child._inner.text,
 								face = face_info,
 								fgcolor = CLR_TEXT_SUB_EFF,
-								width = inner_w + 500,
+							    width = inner_w,
 								alignment = "center",
 							}
-							result[1][i][j]._inner = new_stats
+							result[1][i][j] = new_stats
 							break
 						end
 					end
@@ -1112,6 +1117,34 @@ local function patchSimpleUI(plugin)
 		end
 	return result
 	end
+
+	local original_BottomBar_buildTabCell = BottomBar.buildTabCell
+
+	---@diagnostic disable-next-line: duplicate-set-field
+	BottomBar.buildTabCell = function(action_id, active, tab_w, mode)
+		local result = original_BottomBar_buildTabCell(action_id, active, tab_w, mode)
+		local TextWidget = require("ui/widget/textwidget")
+
+		for i, child in ipairs(result[1]) do
+			for j, meta_child in ipairs(child) do
+				if meta_child.text then
+					local new_text_widget = TextWidget:new{
+						text = meta_child.text,
+						face = SimpleUIOverrides:getFace(SimpleUIOverrides.FONT_OPTIONS.bottom_tab_font.setting_suffix, meta_child.face.size),
+						fgcolor = meta_child.fgcolor or UI.CLR_TEXT,
+						--width = meta_child.width or 100,
+						bold = meta_child.bold or false,
+						alignment = "center",
+					}
+					result[1][i][j] = new_text_widget
+					logger.info("Ultimate Fonts: bottom bar tab cell result: ", meta_child)
+				end
+			end
+		end
+		return result
+	end
+
+	
 end
 
 userpatch.registerPatchPluginFunc("simpleui", patchSimpleUI)
