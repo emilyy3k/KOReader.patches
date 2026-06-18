@@ -1019,136 +1019,99 @@ local function patchSimpleUI(plugin)
 
 	local orig_build = CoverDeck.build
 
-	local FontObj = userpatch.getUpValue(orig_build, "Font")
-
 	---@diagnostic disable-next-line: duplicate-set-field
 	CoverDeck.build = function(w, ctx)
 		local pfx = ctx.pfx or ""
 
+		local result = orig_build(w, ctx)
+	
+		if not result then return result end
 		
+		-- Check if custom fonts are actually set
+		local title_font = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_title_font.setting_suffix)
+		local stats_font = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_info_font.setting_suffix)
+		local needs_patch = (title_font ~= SUIStyle.FACE_REGULAR) or (stats_font ~= SUIStyle.FACE_REGULAR)
+		
+		-- if not needs_patch then
+		-- 	return result  -- No custom fonts, return unmodified
+		-- end
+		
+		-- result is a FrameContainer; result[1] is the VerticalGroup (final_vg)
+		local vg = result[1]
 
+		if not vg or not vg[1] then return result end
+		
+		-- Get theme colors (same as in original M.build)
+		local ok_ss, themeStyle = pcall(require, "sui_style")
+		local CLR_TEXT_EFF = ok_ss and themeStyle and themeStyle.getThemeColor("fg")
+			or require("ffi/blitbuffer").COLOR_BLACK
+		local CLR_TEXT_SUB_EFF = ok_ss and themeStyle and themeStyle.getThemeColor("text_secondary")
+			or CLR_TEXT_EFF or UI.CLR_TEXT_SUB
+		
 		-- Extract info from ctx to calculate font sizes (matches M.build)
 		local c = ctx.cfg and ctx.cfg.coverdeck
 		local scale = c and c.scale or 1
 		local lbl_scale = c and c.lbl_scale or 1
-		local title_fs = math.max(8, math.floor(SUIStyle.FS_TITLE * scale * lbl_scale))
-		local info_fs = math.max(7, math.floor(SUIStyle.FS_DETAIL * scale * lbl_scale))
-		FontObj.getFace = function(_, font_name, font_size)
-			local option_key = nil
-			if font_size == title_fs then
-				option_key = SimpleUIOverrides.FONT_OPTIONS.coverdeck_title_font.setting_suffix
-			elseif font_size == info_fs then
-				option_key = SimpleUIOverrides.FONT_OPTIONS.coverdeck_info_font.setting_suffix
-			end
+		local title_fs = math.floor(SUIStyle.FS_TITLE * scale * lbl_scale)
+		local info_fs = math.floor(SUIStyle.FS_DETAIL * scale * lbl_scale)
+		
+		-- Create new font faces with custom fonts
+		local face_title = Font:getFace(title_font, math.max(8, title_fs))
+		local face_info = Font:getFace(stats_font, math.max(7, info_fs))
 
-			if option_key then
-				return SimpleUIOverrides:getFace(option_key, font_size)
-			else
-				return Font:getFace(font_name, font_size)
+		if title_font ~= SUIStyle.FACE_REGULAR then
+
+			-- Find and replace in the parent container
+			local vg = result[1]
+			for i, child in ipairs(vg) do
+				
+				if child._inner and child._inner.bold == true and  child._inner.face and child._inner.face.size == title_fs then
+					local inner_w = child._inner.width or 200
+					---logger.info("Ultimate Fonts: Replacing title widget child is: ", child._inner)
+					local new_title = UI.makeColoredText{
+						text = child._inner.text,
+						face = face_title,
+						bold = true,
+						fgcolor = CLR_TEXT_EFF,
+						width = inner_w,
+						alignment = "center",
+					}
+					result[1][i]._inner = new_title
+					---logger.info("Ultimate Fonts: Replacing title widget child is: ", child._inner)
+					break
+				end
 			end
 		end
+		
+		if stats_font ~= SUIStyle.FACE_REGULAR then
 
-		local result = orig_build(w, ctx)
-
-		return result
+			-- Find and replace in the parent container (meta VerticalGroup)
+			local vg = result[1]
+			for i, child in ipairs(vg) do
+				if type(child) == "table" and child[1] then
+					-- This might be the meta group
+					
+					for j, meta_child in ipairs(child) do
+						if meta_child._inner and meta_child._inner.bold ~= true and meta_child._inner.face and meta_child._inner.face.size == info_fs then
+							logger.info("Ultimate Fonts: Replacing stats widget child is: ", result[1][i][j]._inner)
+							local inner_w = meta_child._inner.width or 200
+							logger.info("Ultimate Fonts: Stats widget inner width is: ", inner_w)
+							local new_stats = UI.makeColoredText{
+								text = meta_child._inner.text,
+								face = face_info,
+								fgcolor = CLR_TEXT_SUB_EFF,
+								width = inner_w + 500,
+								alignment = "center",
+							}
+							result[1][i][j]._inner = new_stats
+							break
+						end
+					end
+				end
+			end
+		end
+	return result
 	end
-		
-	-- 	if not result then return result end
-		
-	-- 	-- Check if custom fonts are actually set
-	-- 	local title_font = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_title_font.setting_suffix)
-	-- 	local stats_font = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_info_font.setting_suffix)
-	-- 	local needs_patch = (title_font ~= SUIStyle.FACE_REGULAR) or (stats_font ~= SUIStyle.FACE_REGULAR)
-		
-	-- 	-- if not needs_patch then
-	-- 	-- 	return result  -- No custom fonts, return unmodified
-	-- 	-- end
-		
-	-- 	-- result is a FrameContainer; result[1] is the VerticalGroup (final_vg)
-	-- 	local vg = result[1]
-	-- 	if not vg or not vg[1] then return result end
-		
-	-- 	-- Get theme colors (same as in original M.build)
-	-- 	local ok_ss, themeStyle = pcall(require, "sui_style")
-	-- 	local CLR_TEXT_EFF = ok_ss and themeStyle and themeStyle.getThemeColor("fg")
-	-- 		or require("ffi/blitbuffer").COLOR_BLACK
-	-- 	local CLR_TEXT_SUB_EFF = ok_ss and themeStyle and themeStyle.getThemeColor("text_secondary")
-	-- 		or CLR_TEXT_EFF or UI.CLR_TEXT_SUB
-		
-	-- 	-- Extract info from ctx to calculate font sizes (matches M.build)
-	-- 	local c = ctx.cfg and ctx.cfg.coverdeck
-	-- 	local scale = c and c.scale or 1
-	-- 	local lbl_scale = c and c.lbl_scale or 1
-	-- 	local title_fs = math.floor(SUIStyle.FS_TITLE * scale * lbl_scale)
-	-- 	local info_fs = math.floor(SUIStyle.FS_DETAIL * scale * lbl_scale)
-		
-	-- 	-- Create new font faces with custom fonts
-	-- 	local face_title = Font:getFace(title_font, math.max(8, title_fs))
-	-- 	local face_info = Font:getFace(stats_font, math.max(7, info_fs))
-		
-	-- 	-- If M.build has been patched to store widget references, use them
-	-- 	-- (requires adding these two lines at end of M.build before return:
-	-- 	--   result._coverdeck_title_widget = title_widget
-	-- 	--   result._coverdeck_stats_widget = stats_w
-		
-	-- 	if title_font ~= SUIStyle.FACE_REGULAR then
-	-- 		-- local old_title = result._coverdeck_title_widget
-	-- 		-- local title_text = old_title._text or (old_title._inner and old_title._inner._text) or ""
-	-- 		local inner_w = result.dimen and result.dimen.w or 200
-			
-	-- 		local new_title = UI.makeColoredText{
-	-- 			text = "Poop ass shit",---title_text,
-	-- 			face = face_title,
-	-- 			bold = true,
-	-- 			fgcolor = CLR_TEXT_EFF,
-	-- 			width = inner_w,
-	-- 			alignment = "center",
-	-- 		}
-			
-	-- 		-- Find and replace in the parent container
-	-- 		local vg = result[1]
-	-- 		for i, child in ipairs(vg) do
-	-- 			if child == old_title then
-	-- 				vg[i] = new_title
-	-- 				result._coverdeck_title_widget = new_title
-	-- 				break
-	-- 			end
-	-- 		end
-	-- 	end
-		
-	-- 	if result._coverdeck_stats_widget and stats_font ~= SUIStyle.FACE_REGULAR then
-	-- 		local old_stats = result._coverdeck_stats_widget
-	-- 		local stats_text = old_stats._text or (old_stats._inner and old_stats._inner._text) or ""
-	-- 		local inner_w = result.dimen and result.dimen.w or 200
-			
-	-- 		local new_stats = UI.makeColoredText{
-	-- 			text = stats_text,
-	-- 			face = face_info,
-	-- 			fgcolor = CLR_TEXT_SUB_EFF,
-	-- 			width = inner_w,
-	-- 			alignment = "center",
-	-- 		}
-			
-	-- 		-- Find and replace in the parent container (meta VerticalGroup)
-	-- 		local vg = result[1]
-	-- 		for i, child in ipairs(vg) do
-	-- 			if type(child) == "table" and child[1] then
-	-- 				-- This might be the meta group
-	-- 				for j, meta_child in ipairs(child) do
-	-- 					if meta_child == old_stats then
-	-- 						child[j] = new_stats
-	-- 						result._coverdeck_stats_widget = new_stats
-	-- 						goto done
-	-- 					end
-	-- 				end
-	-- 			end
-	-- 		end
-	-- 		::done::
-		
-		
-	-- 	end
-	-- return result
-	-- end
 end
 
 userpatch.registerPatchPluginFunc("simpleui", patchSimpleUI)
