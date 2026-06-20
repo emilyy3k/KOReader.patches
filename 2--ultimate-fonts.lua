@@ -671,8 +671,8 @@ local DictQuickLookupOverrides = FontOverride:new{
 }
 
 local original_DictQuickLookup_init = DictQuickLookup.init
----@diagnostic disable-next-line: duplicate-set-field
 
+---@diagnostic disable-next-line: duplicate-set-field
 function DictQuickLookup:init(...)
 	self.dict_font_size = G_reader_settings:readSetting("dict_font_size") or 20
 	self.content_face = DictQuickLookupOverrides:getFace(DictQuickLookupOverrides.FONT_OPTIONS.content_face.setting_suffix, self.dict_font_size)
@@ -999,12 +999,24 @@ local SIMPLE_UI_FONT_OPTIONS = {
 		label = _("Bottom Bar Tabs"),
 		default_face_name = "cfont",
 	},
+	stats_value_font = {
+		setting_suffix = "stats_value_font",
+		label = _("Reading Stats Values"),
+		default_face_name = "cfont",
+	},
+	stats_label_font = {
+		setting_suffix = "stats_label_font",
+		label = _("Reading Stats Labels"),
+		default_face_name = "cfont",
+	},
 }
 
 local SIMPLE_UI_FONT_OPTION_LIST = {
 	SIMPLE_UI_FONT_OPTIONS.coverdeck_title_font,
 	SIMPLE_UI_FONT_OPTIONS.coverdeck_info_font,
 	SIMPLE_UI_FONT_OPTIONS.bottom_tab_font,
+	SIMPLE_UI_FONT_OPTIONS.stats_value_font,
+	SIMPLE_UI_FONT_OPTIONS.stats_label_font,
 }
 
 local SimpleUIOverrides = FontOverride:new{
@@ -1017,106 +1029,16 @@ local SimpleUIOverrides = FontOverride:new{
 
 local function patchSimpleUI(plugin)
 	local CoverDeck = require("desktop_modules/module_coverdeck")
+	local ReadingStats = require("desktop_modules/module_reading_stats")
+
 	local BottomBar = require("sui_bottombar")
-	local SUIStyle = require(("sui_style"))
+
+	local SUIStyle = require("sui_style")
 	local SUISettings = require("sui_store")
 	local UI = require("sui_core")
-
-	local orig_CoverDeck_build = CoverDeck.build
-
-	---@diagnostic disable-next-line: duplicate-set-field
-	CoverDeck.build = function(w, ctx)
-		local pfx = ctx.pfx or ""
-
-		local result = orig_CoverDeck_build(w, ctx)
 	
-		if not result then return result end
-		
-		-- Check if custom fonts are actually set
-		local title_font = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_title_font.setting_suffix)
-		local stats_font = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_info_font.setting_suffix)
-		local needs_patch = (title_font ~= SUIStyle.FACE_REGULAR) or (stats_font ~= SUIStyle.FACE_REGULAR)
-		
-		-- if not needs_patch then
-		-- 	return result  -- No custom fonts, return unmodified
-		-- end
-		
-		-- result is a FrameContainer; result[1] is the VerticalGroup (final_vg)
-		local vg = result[1]
-
-		if not vg or not vg[1] then return result end
-		
-		-- Get theme colors (same as in original M.build)
-		local ok_ss, themeStyle = pcall(require, "sui_style")
-		local CLR_TEXT_EFF = ok_ss and themeStyle and themeStyle.getThemeColor("fg")
-			or require("ffi/blitbuffer").COLOR_BLACK
-		local CLR_TEXT_SUB_EFF = ok_ss and themeStyle and themeStyle.getThemeColor("text_secondary")
-			or CLR_TEXT_EFF or UI.CLR_TEXT_SUB
-		
-		-- Extract info from ctx to calculate font sizes (matches M.build)
-		local c = ctx.cfg and ctx.cfg.coverdeck
-		local scale = c and c.scale or 1
-		local lbl_scale = c and c.lbl_scale or 1
-		local title_fs = math.floor(SUIStyle.FS_TITLE * scale * lbl_scale)
-		local info_fs = math.floor(SUIStyle.FS_DETAIL * scale * lbl_scale)
-		
-		-- Create new font faces with custom fonts
-		local face_title = Font:getFace(title_font, math.max(8, title_fs))
-		local face_info = Font:getFace(stats_font, math.max(7, info_fs))
-
-		if title_font ~= SUIStyle.FACE_REGULAR then
-
-			-- Find and replace in the parent container
-			local vg = result[1]
-			for i, child in ipairs(vg) do
-				
-				if child._inner and child._inner.bold == true and  child._inner.face and child._inner.face.size == title_fs then
-					local inner_w = child._inner.width or 200
-					---logger.info("Ultimate Fonts: Replacing title widget child is: ", child._inner)
-					local new_title = UI.makeColoredText{
-						text = child._inner.text,
-						face = face_title,
-						bold = true,
-						fgcolor = CLR_TEXT_EFF,
-						width = inner_w,
-						alignment = "center",
-					}
-					result[1][i] = new_title
-					---logger.info("Ultimate Fonts: Replacing title widget child is: ", child._inner)
-					break
-				end
-			end
-		end
-		
-		if stats_font ~= SUIStyle.FACE_REGULAR then
-
-			-- Find and replace in the parent container (meta VerticalGroup)
-			local vg = result[1]
-			for i, child in ipairs(vg) do
-				if type(child) == "table" and child[1] then
-					-- This might be the meta group
-					
-					for j, meta_child in ipairs(child) do
-						if meta_child._inner and meta_child._inner.bold ~= true and meta_child._inner.face and meta_child._inner.face.size == info_fs then
-							--logger.info("Ultimate Fonts: Replacing stats widget child is: ", result[1][i][j]._inner)
-							local inner_w = meta_child._inner.width or 200
-							--logger.info("Ultimate Fonts: Stats widget inner width is: ", inner_w)
-							local new_stats = UI.makeColoredText{
-								text = meta_child._inner.text,
-								face = face_info,
-								fgcolor = CLR_TEXT_SUB_EFF,
-							    width = inner_w,
-								alignment = "center",
-							}
-							result[1][i][j] = new_stats
-							break
-						end
-					end
-				end
-			end
-		end
-	return result
-	end
+	CoverDeck.face_title_override = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_title_font.setting_suffix)
+	CoverDeck.face_info_override = SimpleUIOverrides:getFontPath(SimpleUIOverrides.FONT_OPTIONS.coverdeck_info_font.setting_suffix)
 
 	local original_BottomBar_buildTabCell = BottomBar.buildTabCell
 
@@ -1137,13 +1059,68 @@ local function patchSimpleUI(plugin)
 						alignment = "center",
 					}
 					result[1][i][j] = new_text_widget
-					logger.info("Ultimate Fonts: bottom bar tab cell result: ", meta_child)
 				end
 			end
 		end
 		return result
 	end
 
+	local original_ReadingStats_build = ReadingStats.build
+
+	---@diagnostic disable-next-line: duplicate-set-field
+	ReadingStats.build = function(w, ctx)
+		local result = original_ReadingStats_build(w, ctx)
+		if not result then return result end
+
+		local TextWidget = require("ui/widget/textwidget")
+
+		local Config = require("sui_config")
+
+		local _BASE_RS_VAL_FS   = SUIStyle.FS_TITLE     -- 22: stat value (large numeric)
+		local _BASE_RS_LBL_FS   = SUIStyle.FS_DETAIL    -- 15: stat label
+		local _BASE_RS_PH_FS    = SUIStyle.FS_BODY      
+
+		local scale     = Config.getModuleScale("reading_stats", ctx and ctx.pfx)
+		local text_scale = scale * (Config.getRSTextScalePct() / 100)
+		local _val_fs = math.max(8, math.floor(_BASE_RS_VAL_FS * text_scale))
+		local _lbl_fs = math.max(6, math.floor(_BASE_RS_LBL_FS * text_scale))
+		local _ph_fs  = math.max(8, math.floor(_BASE_RS_PH_FS  * scale))
+
+		local stats_value_font = SimpleUIOverrides:getFace(SimpleUIOverrides.FONT_OPTIONS.stats_value_font.setting_suffix, _val_fs)
+		local stats_label_font = SimpleUIOverrides:getFace(SimpleUIOverrides.FONT_OPTIONS.stats_label_font.setting_suffix, _lbl_fs)
+
+		for i, child in ipairs(result[1][1]) do
+			local widgets = child[1][1][1]
+			local stat_num = widgets[1]
+			local stat_label = widgets[2]
+			-- logger.info("Ultimate Fonts: reading stats widget result: ", stat_num._inner.text, stat_label._inner.text)
+
+			if stat_num._inner and stat_num._inner.text and stat_num._inner.face and stat_num._inner.face.size == _val_fs then
+				local new_stat_num = TextWidget:new{
+					text = stat_num._inner.text,
+					face = stats_value_font,
+					fgcolor = stat_num._inner.fgcolor or UI.CLR_TEXT,
+					width = stat_num._inner.width or 100,
+					bold = stat_num._inner.bold or false,
+					alignment = "center",
+				}
+				result[1][1][i][1][1][1][1] = new_stat_num
+			end
+			if stat_label._inner and stat_label._inner.text and stat_label._inner.face and stat_label._inner.face.size == _lbl_fs then
+				local new_stat_label = TextWidget:new{
+					text = stat_label._inner.text,
+					face = stats_label_font,
+					fgcolor = stat_label._inner.fgcolor or UI.CLR_TEXT,
+					width = stat_label._inner.width or 100,
+					bold = stat_label._inner.bold or false,
+					alignment = "center",
+				}
+				result[1][1][i][1][1][1][2] = new_stat_label
+			end
+		end
+
+		return result
+	end
 	
 end
 
