@@ -1101,6 +1101,99 @@ local function patchCoverBrowser(plugin)
 end
 
 userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+
+--------------------------------------------------------------------------------
+-- Bookshelf plugin font logic
+--------------------------------------------------------------------------------
+
+local BOOKSHELF_FONT_KEY = "bookshelf"
+local BOOKSHELF_FONT_PATH_SETTING = "bookshelf_font_path"
+local BOOKSHELF_FONT_NAME_SETTING = "bookshelf_font_name"
+
+local BOOKSHELF_FONT_OPTIONS = {
+	book_title_font = {
+		setting_suffix = "book_title_font",
+		label = _("Book Title"),
+		default_face_name = "cfont",
+	},
+	book_authors_font = {
+		setting_suffix = "book_authors_font",
+		label = _("Book Authors"),
+		default_face_name = "cfont",
+	},
+	book_description_font = {
+		setting_suffix = "book_description_font",
+		label = _("Book Description"),
+		default_face_name = "infont",
+	},
+	book_metadata_font = {
+		setting_suffix = "book_metadata_font",
+		label = _("Book Metadata"),
+		default_face_name = "x_smallinfofont",
+	},
+	book_progress_font = {
+		setting_suffix = "book_progress_font",
+		label = _("Book Progress"),
+		default_face_name = "x_smallinfofont",
+	},
+	book_rating_font = {
+		setting_suffix = "book_rating_font",
+		label = _("Book Rating"),
+		default_face_name = "x_smallinfofont",
+	},
+	book_status_font = {
+		setting_suffix = "book_status_font",
+		label = _("Book Status"),
+		default_face_name = "x_smallinfofont",
+	},
+	book_tags_font = {
+		setting_suffix = "book_tags_font",
+		label = _("Book Tags"),
+		default_face_name = "x_smallinfofont",
+	},
+}
+
+local BOOKSHELF_FONT_OPTION_LIST = {
+	BOOKSHELF_FONT_OPTIONS.book_title_font,
+	BOOKSHELF_FONT_OPTIONS.book_authors_font,
+	BOOKSHELF_FONT_OPTIONS.book_description_font,
+	BOOKSHELF_FONT_OPTIONS.book_metadata_font,
+	BOOKSHELF_FONT_OPTIONS.book_progress_font,
+	BOOKSHELF_FONT_OPTIONS.book_rating_font,
+	BOOKSHELF_FONT_OPTIONS.book_status_font,
+	BOOKSHELF_FONT_OPTIONS.book_tags_font,
+}
+
+local BookshelfOverrides = FontOverride:new{
+	SETTINGS_KEY = BOOKSHELF_FONT_KEY,
+	FONT_PATH_SETTING = BOOKSHELF_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = BOOKSHELF_FONT_NAME_SETTING,
+	FONT_OPTIONS = BOOKSHELF_FONT_OPTIONS,
+	FONT_OPTION_LIST = BOOKSHELF_FONT_OPTION_LIST,
+}
+
+local function patchBookshelf(plugin)
+	local bookshelfHeroCard = require("lib/bookshelf_hero_card")
+
+    local original_build = bookshelfHeroCard._buildRightColumn
+
+    bookshelfHeroCard._buildRightColumn = function(self, book, regions, state, dimen)
+		regions.title.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_title_font.setting_suffix) or regions.title.font_face
+		regions.author.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_authors_font.setting_suffix) or regions.author.font_face
+		regions.description.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_description_font.setting_suffix) or regions.description.font_face
+		regions.metadata.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_metadata_font.setting_suffix) or regions.metadata.font_face
+		regions.progress.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_progress_font.setting_suffix) or regions.progress.font_face
+		regions.rating.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_rating_font.setting_suffix) or regions.rating.font_face
+		regions.status.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_status_font.setting_suffix) or regions.status.font_face
+		regions.tags.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_tags_font.setting_suffix) or regions.tags.font_face
+        
+		return original_build(self, book, regions, state, dimen)
+    end
+end
+
+userpatch.registerPatchPluginFunc("bookshelf", patchBookshelf)
+
+
 --------------------------------------------------------------------------------
 -- MENU INTEGRATION (Unified)
 --------------------------------------------------------------------------------
@@ -1514,6 +1607,8 @@ local function patchSettingsMenu(menu, order)
 					menu_text = _("Button fonts")}),
 				getFontMenuSubsection(CoverBrowserOverrides, {
 					menu_text = _("Cover Browser fonts")}),
+				getFontMenuSubsection(BookshelfOverrides, {
+					menu_text = _("Bookshelf fonts")}),
 			}
 		end,
 	}
