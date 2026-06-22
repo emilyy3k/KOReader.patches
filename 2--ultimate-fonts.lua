@@ -1252,37 +1252,6 @@ local function getFontMenuSubsection(override, labels)
 	}
 end
 
-local function getDictionaryFontMenuItem()
-	return {
-		text_func = function()
-			local dict_font = G_reader_settings:readSetting("dict_font")
-			if dict_font then
-				local display_name = dict_font
-				local cre = require("document/credocument"):engineInit()
-				local font_filename, font_faceindex = cre.getFontFaceFilenameAndFaceIndex(dict_font)
-				if not font_filename then
-					font_filename, font_faceindex = cre.getFontFaceFilenameAndFaceIndex(dict_font, nil, true)
-				end
-				if font_filename and font_faceindex then
-					display_name = FontList:getLocalizedFontName(font_filename, font_faceindex) or display_name
-				end
-				return T(_("Dictionary font: %1"), BD.wrap(display_name))
-			end
-			return _("Dictionary font")
-		end,
-		sub_item_table_func = function()
-			return getGenericFontTable(ReaderFont, {
-				setting_key_path = "dict_font",
-				save_path_as_name = true,
-				restart_on_change = false,
-				mark_active_func = function(fname, fparams)
-					return fparams == G_reader_settings:readSetting("dict_font")
-				end,
-			})
-		end,
-	}
-end
-
 local function getUIFontMenuItem()
 	local function buildDefaultUIFontPickerTable()
 		return makeRefreshableItemTable(getGenericFontTable(ReaderFont, {

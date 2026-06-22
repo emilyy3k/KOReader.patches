@@ -1,0 +1,9 @@
+[submodule "koreader"]
+	path = koreader
+	url = https://github.com/koreader/koreader.git
+[submodule "simpleui.koplugin"]
+	path = simpleui.koplugin
+	url = https://github.com/doctorhetfield-cmd/simpleui.koplugin
+[submodule "bookshelf.koplugin"]
+	path = bookshelf.koplugin
+	url = https://github.com/AndyHazz/bookshelf.koplugin
