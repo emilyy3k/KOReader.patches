@@ -1,3 +1,4 @@
+---@diagnostic disable: duplicate-set-field
 local logger = require("logger")
 logger.info("Applying custom UI fonts patch")
 
