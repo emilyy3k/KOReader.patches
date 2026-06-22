@@ -1253,6 +1253,55 @@ local function getFontMenuSubsection(override, labels)
 	}
 end
 
+local function getFontMenuSection(subsections, labels)
+	local labels = labels or {}
+	local menu_text = labels.menu_text or _("Fonts")
+	local shared_font_text = labels.shared_font_text or _("Shared font: %1")
+	local use_shared_font_text = labels.use_shared_font_text or _("Use shared font: %1")
+	local reset_item_text = labels.reset_item_text or _("Reset all font overrides in this category")
+	local reset_confirm_text = labels.reset_confirm_text or _("Reset all per-element overrides for this category and make them inherit the shared font or built-in defaults?")
+
+
+	local function resetGroupFontOverrides()
+		for override, _ in pairs(subsections) do
+			for _, option in ipairs(override:getOptionList()) do
+				override:clearFontSlotOverride(option.setting_suffix)
+			end
+		end
+	end
+
+	return {
+		text = menu_text,
+		sub_item_table_func = function()
+			local item_table = {
+				{
+				text = reset_item_text,
+				callback = function(touchmenu_instance)
+					UIManager:show(ConfirmBox:new({
+						text = reset_confirm_text,
+						ok_text = _("Reset"),
+						ok_callback = function()
+							deferUIFontChange(function()
+								resetGroupFontOverrides()
+							end)
+						end,
+						cancel_text = _("Cancel"),
+					}))
+				end,
+				separator = true,
+			},
+			}
+			for override, label in pairs(subsections) do
+				table.insert(item_table, getFontMenuSubsection(override, label))
+			end
+			return makeRefreshableItemTable(item_table, function()
+				return getFontMenuSection(subsections, labels)
+			end)
+		end,
+	}
+end
+
+
 local function getUIFontMenuItem()
 	local function buildDefaultUIFontPickerTable()
 		return makeRefreshableItemTable(getGenericFontTable(ReaderFont, {
