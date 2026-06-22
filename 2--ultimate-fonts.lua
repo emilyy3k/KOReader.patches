@@ -16,6 +16,7 @@ local DictQuickLookup = require("ui/widget/dictquicklookup")
 local FileManagerMenu = require("apps/filemanager/filemanagermenu")
 local ReaderMenu = require("apps/reader/modules/readermenu")
 local userpatch = require("userpatch")
+
 local INHERITED_MENU_PREFIX = "\u{2592}\u{200A}"
 
 local function showUIFontRestartPrompt()
@@ -624,12 +625,14 @@ local function applyMainMenuFontToTouchMenu(touchmenu)
 end
 
 original_TouchMenu_init = TouchMenu.init
+---@diagnostic disable-next-line: duplicate-set-field
 function TouchMenu:init(...)
 	applyMainMenuFontToTouchMenu(self)
 	return original_TouchMenu_init(self, ...)
 end
 
 original_TouchMenu_updateItems = TouchMenu.updateItems
+---@diagnostic disable-next-line: duplicate-set-field
 function TouchMenu:updateItems(...)
 	applyMainMenuFontToTouchMenu(self)
 	return original_TouchMenu_updateItems(self, ...)
@@ -670,6 +673,7 @@ local DictQuickLookupOverrides = FontOverride:new{
 
 local original_DictQuickLookup_init = DictQuickLookup.init
 
+---@diagnostic disable-next-line: duplicate-set-field
 function DictQuickLookup:init(...)
 	self.dict_font_size = G_reader_settings:readSetting("dict_font_size") or 20
 	self.content_face = DictQuickLookupOverrides:getFace(DictQuickLookupOverrides.FONT_OPTIONS.content_face.setting_suffix, self.dict_font_size)
@@ -776,6 +780,7 @@ local InfoMessageOverrides = FontOverride:new{
 
 
 local original_InfoMessageWidget_init = InfoMessageWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function InfoMessageWidget:init(...)
 	if self.monospace_font then
 		self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.text_face_monospace.setting_suffix)
@@ -786,6 +791,7 @@ function InfoMessageWidget:init(...)
 end
 
 local original_ConfirmBoxWidget_init = ConfirmBoxWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ConfirmBoxWidget:init(...)
 	self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.confirmbox_face.setting_suffix)
 	return original_ConfirmBoxWidget_init(self, ...)
@@ -844,6 +850,7 @@ local ButtonOverrides = FontOverride:new{
 
 local ButtonWidget = require("ui/widget/button")
 local original_ButtonWidget_init = ButtonWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ButtonWidget:init(...)
 	if self.menu_style then
 		self.text_font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.menu_button_face.setting_suffix)
@@ -855,6 +862,7 @@ end
 
 local ButtonDialogWidget = require("ui/widget/buttondialog")
 local original_ButtonDialogWidget_init = ButtonDialogWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ButtonDialogWidget:init(...)
 	self.title_face  = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_title_face.setting_suffix)
 	self.info_face = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_info_face.setting_suffix)
@@ -863,6 +871,7 @@ end
 
 local ButtonProgressWidget = require("ui/widget/buttonprogresswidget")
 local original_ButtonProgressWidget_init = ButtonProgressWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ButtonProgressWidget:init(...)
 	self.font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.button_progress_face.setting_suffix)
 	return original_ButtonProgressWidget_init(self, ...)
@@ -903,6 +912,7 @@ local InputOverrides = FontOverride:new{
 
 local InputDialogWidget = require("ui/widget/inputdialog")
 local original_InputDialogWidget_init = InputDialogWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function InputDialogWidget:init(...)
 	self.input_face = InputOverrides:getFace(InputOverrides.FONT_OPTIONS.input_dialog_face.setting_suffix)
 	return original_InputDialogWidget_init(self, ...)
@@ -910,6 +920,7 @@ end
 
 local InputTextWidget = require("ui/widget/inputtext")
 local original_InputTextWidget_init = InputTextWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function InputTextWidget:init(...)
 	self.input_face = InputOverrides:getFace(InputOverrides.FONT_OPTIONS.input_text_face.setting_suffix)
 	return original_InputTextWidget_init(self, ...)
@@ -956,6 +967,7 @@ local TitlebarOverrides = FontOverride:new{
 }
 
 
+---@diagnostic disable-next-line: duplicate-set-field
 function TitlebarWidget:init(...)
 	self.title_face_fullscreen = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.title_face_fullscreen.setting_suffix)
 	self.title_face_not_fullscreen = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.title_face_not_fullscreen.setting_suffix)
@@ -965,7 +977,7 @@ function TitlebarWidget:init(...)
 end
 
 --------------------------------------------------------------------------------
--- Book List Menu font logic
+-- Coverbrowser font logic
 --------------------------------------------------------------------------------
 
 local COVERBROWSER_FONT_KEY = "coverbrowser"
@@ -988,12 +1000,18 @@ local COVERBROWSER_FONT_OPTIONS = {
 		label = _("Book Authors"),
 		default_face_name = "cfont",
 	},
+	book_badge_font = {
+		setting_suffix = "book_badge_font",
+		label = _("Book Badge"),
+		default_face_name = "smallinfofont",
+	},
 }
 
 local COVERBROWSER_FONT_OPTION_LIST = {
 	COVERBROWSER_FONT_OPTIONS.folder_title_font,
 	COVERBROWSER_FONT_OPTIONS.book_title_font,
 	COVERBROWSER_FONT_OPTIONS.book_authors_font,
+	COVERBROWSER_FONT_OPTIONS.book_badge_font,
 }
 
 local CoverBrowserOverrides = FontOverride:new{
@@ -1193,6 +1211,181 @@ end
 
 userpatch.registerPatchPluginFunc("bookshelf", patchBookshelf)
 
+-- Simple UI font logic
+--------------------------------------------------------------------------------
+
+
+local SUI_COVERDECK_FONT_OPTIONS = {
+	coverdeck_title_font = {
+		setting_suffix = "coverdeck_title_font",
+		label = _("Coverdeck Title"),
+		default_face_name = "cfont",
+	},
+	coverdeck_stats_font = {
+		setting_suffix = "coverdeck_stats_font",
+		label = _("Coverdeck Stats"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_BOTTOMBAR_FONT_OPTIONS = {
+	bottom_nav_font = {
+		setting_suffix = "bottom_nav_font",
+		label = _("Bottom Bar Tabs"),
+		default_face_name = "cfont",
+	},
+	bottom_pagination_font = {
+		setting_suffix = "bottom_pagination_font",
+		label = _("Bottom Bar Pagination"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_READING_STATS_FONT_OPTIONS = {
+	stats_value_font = {
+		setting_suffix = "stats_value_font",
+		label = _("Reading Stats Values"),
+		default_face_name = "cfont",
+	},
+	stats_label_font = {
+		setting_suffix = "stats_label_font",
+		label = _("Reading Stats Labels"),
+		default_face_name = "cfont",
+	},
+	stats_placeholder_font = {
+		setting_suffix = "stats_placeholder_font",
+		label = _("Reading Stats Placeholder"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_STAT_WINDOW_FONT_OPTIONS = {
+	title_font = {
+		setting_suffix = "title_font",
+		label = _("Stats Title"),
+		default_face_name = "cfont",
+	},
+	author_font = {
+		setting_suffix = "author_font",
+		label = _("Stats Author"),
+		default_face_name = "cfont",
+	},
+	label_font = {
+		setting_suffix = "label_font",
+		label = _("Stats Label"),
+		default_face_name = "cfont",
+	},
+	value_font = {
+		setting_suffix = "value_font",
+		label = _("Stats Value"),
+		default_face_name = "cfont",
+	},
+	section_label_font = {
+		setting_suffix = "section_label_font",
+		label = _("Stats Section Label"),
+		default_face_name = "cfont",
+	},
+	year_header_font = {
+		setting_suffix = "year_header_font",
+		label = _("Stats Year Header"),
+		default_face_name = "cfont",
+	},
+	date_font = {
+		setting_suffix = "date_font",
+		label = _("Stats Date"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_STAT_WINDOW_FONT_OPTION_LIST = {
+	SUI_STAT_WINDOW_FONT_OPTIONS.title_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.author_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.label_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.value_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.section_label_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.year_header_font,
+}
+
+local SUI_COVERDECK_FONT_OPTION_LIST = {
+	SUI_COVERDECK_FONT_OPTIONS.coverdeck_title_font,
+	SUI_COVERDECK_FONT_OPTIONS.coverdeck_stats_font,
+}
+
+local SUI_BOTTOMBAR_FONT_OPTION_LIST = {
+	SUI_BOTTOMBAR_FONT_OPTIONS.bottom_nav_font,
+	SUI_BOTTOMBAR_FONT_OPTIONS.bottom_pagination_font,
+}
+
+local SUI_READING_STATS_FONT_OPTION_LIST = {
+	SUI_READING_STATS_FONT_OPTIONS.stats_value_font,
+	SUI_READING_STATS_FONT_OPTIONS.stats_label_font,
+	SUI_READING_STATS_FONT_OPTIONS.stats_placeholder_font,
+}
+
+local SUICoverdeckOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_coverdeck",
+	FONT_PATH_SETTING = "simpleui_coverdeck_font_path",
+	FONT_NAME_SETTING = "simpleui_coverdeck_font_name",
+	FONT_OPTIONS = SUI_COVERDECK_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_COVERDECK_FONT_OPTION_LIST,
+}
+
+local SUIBottombarOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_bottombar",
+	FONT_PATH_SETTING = "simpleui_bottombar_font_path",
+	FONT_NAME_SETTING = "simpleui_bottombar_font_name",
+	FONT_OPTIONS = SUI_BOTTOMBAR_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_BOTTOMBAR_FONT_OPTION_LIST,
+}
+
+local SUIReadingStatsOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_reading_stats",
+	FONT_PATH_SETTING = "simpleui_reading_stats_font_path",
+	FONT_NAME_SETTING = "simpleui_reading_stats_font_name",
+	FONT_OPTIONS = SUI_READING_STATS_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_READING_STATS_FONT_OPTION_LIST,
+}
+
+local SUIStatWindowOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_stats_window",
+	FONT_PATH_SETTING = "simpleui_stats_window_font_path",
+	FONT_NAME_SETTING = "simpleui_stats_window_font_name",
+	FONT_OPTIONS = SUI_STAT_WINDOW_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_STAT_WINDOW_FONT_OPTION_LIST,
+}
+
+local function patchSimpleUI(plugin)
+	local SUIStyle = require("sui_style")
+
+	SUIStyle.FONT_OVERRIDES.coverdeck.title = SUICoverdeckOverrides:getFontPath(SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_title_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.coverdeck.stats = SUICoverdeckOverrides:getFontPath(SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_stats_font.setting_suffix)
+
+	SUIStyle.FONT_OVERRIDES.reading_stats.value = SUIReadingStatsOverrides:getFontPath(SUIReadingStatsOverrides.FONT_OPTIONS.stats_value_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.reading_stats.label = SUIReadingStatsOverrides:getFontPath(SUIReadingStatsOverrides.FONT_OPTIONS.stats_label_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.reading_stats.placeholder = SUIReadingStatsOverrides:getFontPath(SUIReadingStatsOverrides.FONT_OPTIONS.stats_placeholder_font.setting_suffix)
+
+	SUIStyle.FONT_OVERRIDES.foldercover.title = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_title_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.foldercover.author = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_authors_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.foldercover.badge = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_badge_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.foldercover.folder_label = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.folder_title_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.foldercover.folder_title = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.folder_title_font.setting_suffix)
+
+	SUIStyle.FONT_OVERRIDES.bottombar.navbar = SUIBottombarOverrides:getFontPath(SUIBottombarOverrides.FONT_OPTIONS.bottom_nav_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.bottombar.pagebar = SUIBottombarOverrides:getFontPath(SUIBottombarOverrides.FONT_OPTIONS.bottom_pagination_font.setting_suffix)
+
+	SUIStyle.FONT_OVERRIDES.stat_windows.stat_title = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.title_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.stat_windows.title = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.title_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.stat_windows.stat_author = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.author_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.stat_windows.author = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.author_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.stat_windows.cell_lbl = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.label_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.stat_windows.lbl = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.label_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.stat_windows.cell_val = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.value_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.stat_windows.val = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.value_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.stat_windows.section_label = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.section_label_font.setting_suffix)
+	SUIStyle.FONT_OVERRIDES.stat_windows.year_header = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.year_header_font.setting_suffix)
+end
+
+userpatch.registerPatchPluginFunc("simpleui", patchSimpleUI)
 
 --------------------------------------------------------------------------------
 -- MENU INTEGRATION (Unified)
@@ -1590,7 +1783,7 @@ local function hasMenuItem(order_section, item_id)
 end
 
 local function patchSettingsMenu(menu, order)
-	menu.menu_items.custom_fonts = {
+	menu.menu_items.ultimate_fonts = {
 		text = _("Ultimate Fonts"),
 		sub_item_table_func = function()
 			return {
@@ -1609,25 +1802,42 @@ local function patchSettingsMenu(menu, order)
 					menu_text = _("Cover Browser fonts")}),
 				getFontMenuSubsection(BookshelfOverrides, {
 					menu_text = _("Bookshelf fonts")}),
+				getFontMenuSection({
+					[SUIBottombarOverrides] = {
+						menu_text = _("Bottom Bar fonts"),
+					},
+					[SUIStatWindowOverrides] = {
+						menu_text = _("Stats Window fonts"),
+					},
+					[SUICoverdeckOverrides] = {
+						menu_text = _("Coverdeck fonts"),
+					},
+					[SUIReadingStatsOverrides] = {
+						menu_text = _("Reading Stats fonts"),
+					},
+				}, {menu_text = _("Simple UI fonts"),
+					reset_item_text = _("Reset all Simple UI font overrides"),}),
 			}
 		end,
 	}
 
-	if not hasMenuItem(order.setting, "custom_fonts") then
-		table.insert(order.setting, "custom_fonts")
+	if not hasMenuItem(order.setting, "ultimate_fonts") then
+		table.insert(order.setting, "ultimate_fonts")
 	end
 end
 
 local original_FileManagerMenu_setUpdateItemTable = FileManagerMenu.setUpdateItemTable
+---@diagnostic disable-next-line: duplicate-set-field
 function FileManagerMenu:setUpdateItemTable()
 	patchSettingsMenu(self, require("ui/elements/filemanager_menu_order"))
 	original_FileManagerMenu_setUpdateItemTable(self)
 end
 
 local original_ReaderMenu_setUpdateItemTable = ReaderMenu.setUpdateItemTable
+---@diagnostic disable-next-line: duplicate-set-field
 function ReaderMenu:setUpdateItemTable()
 	patchSettingsMenu(self, require("ui/elements/reader_menu_order"))
 	original_ReaderMenu_setUpdateItemTable(self)
 end
 
-logger.info("Custom UI fonts patch applied")
+logger.info("Ultimate Fonts patch applied")
