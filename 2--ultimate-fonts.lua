@@ -1,6 +1,6 @@
 ---@diagnostic disable: duplicate-set-field
 local logger = require("logger")
-logger.info("Applying custom UI fonts patch")
+logger.info("[Ultimate Fonts]: Applying fonts patch")
 
 local ReaderFont = require("apps/reader/modules/readerfont")
 local Font = require("ui/font")
@@ -153,6 +153,44 @@ local function saveFontOverride(setting_keys, font_path, font_name)
 		G_reader_settings:delSetting(setting_keys.name)
 	end
 end
+
+local function rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	if not widget then return end
+	local cur_face = widget.face
+	local resolved
+	if override_class and option then
+		if option and option.setting_suffix then
+			resolved = override_class:getFontPath(option.setting_suffix)
+		elseif type(option) == "string" then
+			-- Backward-compatible: accept a setting suffix or a fully resolved font path.
+			resolved = override_class:getFontPath(option) or option
+		end
+	else
+		resolved = cur_face and cur_face.ftname
+	end
+	local new_size = font_size or (cur_face and cur_face.orig_size) or 18
+	if resolved == (cur_face and cur_face.ftname)
+		and new_size == (cur_face and cur_face.orig_size) then return end
+	local new_face = resolved and Font:getFace(resolved, new_size)
+	if not new_face or new_face == cur_face then return end
+	if widget.bold then
+		widget.bold = true
+	end
+	widget.face = new_face
+	widget:free(true)
+	widget._font_patch_applied = true
+end
+
+local function rebuildTextBoxWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	widget:init()
+end
+
+local function rebuildTextWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	widget:updateSize()
+end
+
 
 --------------------------------------------------------------------------------
 -- 2. UI FONT LOGIC
@@ -574,13 +612,13 @@ local function getTouchMenuItemClass()
 
 	touchmenu_item_class_lookup_attempted = true
 	if not debug or not debug.getupvalue then
-		logger.warn("Ultimate Fonts: debug.getupvalue unavailable, main menu item font override limited to footer text")
+		logger.warn("[Ultimate Fonts]: debug.getupvalue unavailable, main menu item font override limited to footer text")
 		return nil
 	end
 
 	local update_items_func = original_TouchMenu_updateItems or TouchMenu.updateItems
 	if not update_items_func then
-		logger.warn("Ultimate Fonts: TouchMenu.updateItems unavailable, main menu item font override limited to footer text")
+		logger.warn("[Ultimate Fonts]: TouchMenu.updateItems unavailable, main menu item font override limited to footer text")
 		return nil
 	end
 
@@ -596,7 +634,7 @@ local function getTouchMenuItemClass()
 	end
 
 	if not cached_touchmenu_item_class then
-		logger.warn("Ultimate Fonts: could not resolve TouchMenuItem upvalue, main menu item font override limited to footer text")
+		logger.warn("[Ultimate Fonts]: could not resolve TouchMenuItem upvalue, main menu item font override limited to footer text")
 	end
 
 	return cached_touchmenu_item_class
@@ -1143,13 +1181,48 @@ local BOOKSHELF_FONT_OPTIONS = {
 	},
 	book_status_font = {
 		setting_suffix = "book_status_font",
-		label = _("Book Status"),
+		label = _("Device Status"),
 		default_face_name = "x_smallinfofont",
 	},
 	book_tags_font = {
 		setting_suffix = "book_tags_font",
 		label = _("Book Tags"),
 		default_face_name = "x_smallinfofont",
+	},
+	chip_label_font = {
+		setting_suffix = "chip_label_font",
+		label = _("Chip Label"),
+		default_face_name = "infofont",
+	},
+	count_badge_font = {
+		setting_suffix = "count_badge_font",
+		label = _("Cover Series Count Badge"),
+		default_face_name = "infofont",
+	},
+	folder_label_font = {
+		setting_suffix = "folder_label_font",
+		label = _("Folder/Stack Label"),
+		default_face_name = "infofont",
+	},
+	book_cover_badge_font = {
+		setting_suffix = "book_cover_badge_font",
+		label = _("Book Cover Badge"),
+		default_face_name = "infofont",
+	},
+	start_menu_font = {
+		setting_suffix = "start_menu_font",
+		label = _("Start Menu"),
+		default_face_name = "cfont",
+	},
+	cover_label_fullscreen_font = {
+		setting_suffix = "book_cover_label_fullscreen_font",
+		label = _("Book Cover Label (Fullscreen)"),
+		default_face_name = "infofont",
+	},
+	book_menu_bookmark_action_font = {
+		setting_suffix = "book_menu_bookmark_action_font",
+		label = _("Book Menu Header - Bookmark Action"),
+		default_face_name = "infofont",
 	},
 }
 
@@ -1162,6 +1235,12 @@ local BOOKSHELF_FONT_OPTION_LIST = {
 	BOOKSHELF_FONT_OPTIONS.book_rating_font,
 	BOOKSHELF_FONT_OPTIONS.book_status_font,
 	BOOKSHELF_FONT_OPTIONS.book_tags_font,
+	BOOKSHELF_FONT_OPTIONS.chip_label_font,
+	BOOKSHELF_FONT_OPTIONS.count_badge_font,
+	BOOKSHELF_FONT_OPTIONS.book_cover_badge_font,
+	BOOKSHELF_FONT_OPTIONS.folder_label_font,
+	BOOKSHELF_FONT_OPTIONS.start_menu_font,
+	BOOKSHELF_FONT_OPTIONS.cover_label_fullscreen_font,
 }
 
 local BookshelfOverrides = FontOverride:new{
@@ -1174,8 +1253,19 @@ local BookshelfOverrides = FontOverride:new{
 
 local function patchBookshelf(plugin)
 	local bookshelfHeroCard = require("lib/bookshelf_hero_card")
+	local bookshelfChipBar = require("lib/bookshelf_chip_bar")
+	local bookshelfCountBadge = require("lib/bookshelf_count_badge")
+	local bookshelfSpineWidget = require("lib/bookshelf_spine_widget")
+	local bookshelfStartMenu = require("lib/bookshelf_start_menu")
+	local bookshelfShelfRow = require("lib/bookshelf_shelf_row")
 
-    local original_build = bookshelfHeroCard._buildRightColumn
+    local original_hero_card_build = bookshelfHeroCard._buildRightColumn
+	local original_init_chips = bookshelfChipBar._initChips
+	local original_render_badge = bookshelfCountBadge.render
+	local original_spine_widget_render = bookshelfSpineWidget._renderShadowedCard
+	local original_start_menu_applyfontscale = bookshelfStartMenu._applyFontScale
+	local original_shelf_row_build = bookshelfShelfRow.new
+
 
     bookshelfHeroCard._buildRightColumn = function(self, book, regions, state, dimen)
 		regions.title.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_title_font.setting_suffix) or regions.title.font_face
@@ -1187,8 +1277,131 @@ local function patchBookshelf(plugin)
 		regions.status.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_status_font.setting_suffix) or regions.status.font_face
 		regions.tags.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_tags_font.setting_suffix) or regions.tags.font_face
         
-		return original_build(self, book, regions, state, dimen)
+		return original_hero_card_build(self, book, regions, state, dimen)
     end
+
+	bookshelfChipBar._initChips = function(self, ...)
+		local TextWidget = require("ui/widget/textwidget")
+
+		local chipbar_widgets = {}
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+            local widget = orig_TW_new(klass, t, ...)
+            table.insert(chipbar_widgets, #chipbar_widgets + 1, widget)
+			return widget
+        end
+
+		-- Run the original _initChips with the patched TextWidget.new to capture references to the
+		-- chip label widgets for later font updates.
+        original_init_chips(self, ...)
+		
+		TextWidget.new = orig_TW_new
+
+		if chipbar_widgets then
+            local fp = BookshelfOverrides.FONT_OPTIONS.chip_label_font.setting_suffix
+			local folder_font_path = BookshelfOverrides:getFontPath(fp)
+            if folder_font_path then
+				for _, widget in ipairs(chipbar_widgets) do
+					local font_size = widget.face and widget.face.size or 18
+                	rebuildTextWidget(widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.chip_label_font, font_size)
+				end
+            end
+        end
+		
+	end
+
+	bookshelfCountBadge.render = function(self, ...)
+		local TextWidget = require("ui/widget/textwidget")
+
+		local badge_widget = nil
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+			local widget = orig_TW_new(klass, t, ...)
+			if not badge_widget then
+				badge_widget = widget
+			end
+
+			return widget
+		end
+
+		local result = original_render_badge(self, ...)
+
+		TextWidget.new = orig_TW_new
+
+		if badge_widget then
+			rebuildTextWidget(badge_widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.count_badge_font) -- rebuild the whole group to avoid layout issues from different font sizes
+        end
+
+		return result
+	end
+
+	-- bookshelfFolderCard.build = function(self, ...)
+	-- 	local TextBoxWidget = require("ui/widget/textboxwidget")
+
+	-- 	local label_widget = nil
+
+	-- 	local orig_TBW_new = TextBoxWidget.new
+
+	-- 	TextBoxWidget.new = function(klass, t, ...)
+	-- 		t.face = BookshelfOverrides:getFace(BookshelfOverrides.FONT_OPTIONS.folder_label_font.setting_suffix) or t.face
+	-- 		t.bold = true
+	-- 		local widget = orig_TBW_new(klass, t, ...)
+	-- 		-- if not label_widget and widget and widget.text and widget.text ~= "Mg" then
+	-- 		-- 	label_widget = widget
+	-- 		-- end
+	-- 		--widget:init()
+
+	-- 		return widget
+	-- 	end
+
+	-- 	local result = original_folder_card_build(self, ...)
+
+	-- 	TextBoxWidget.new = orig_TBW_new
+
+	-- 	-- if label_widget then
+	-- 	-- 	rebuildTextBoxWidget(label_widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.folder_label_font) -- rebuild the whole group to avoid layout issues from different font sizes
+    --     -- end
+
+	-- 	return result
+	-- end
+
+	bookshelfSpineWidget._renderShadowedCard = function(self, ...)		
+		local TextWidget = require("ui/widget/textwidget")
+
+		local label_widgets = {}
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+			local widget = orig_TW_new(klass, t, ...)
+			table.insert(label_widgets, #label_widgets+1, widget)
+
+			return widget
+		end
+
+		local result = original_spine_widget_render(self, ...)
+
+		TextWidget.new = orig_TW_new
+
+		if label_widgets then
+			for _, widget in ipairs(label_widgets) do
+				rebuildTextWidget(widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.book_cover_badge_font) -- rebuild the whole group to avoid layout issues from different font sizes
+			end
+		end
+
+		return result
+	end
+
+	bookshelfStartMenu._applyFontScale = function(self)
+		original_start_menu_applyfontscale(self)
+
+		self._row_face = BookshelfOverrides:getFace(BookshelfOverrides.FONT_OPTIONS.start_menu_font.setting_suffix, self._row_face.size) or self._row_face
+	end
+
 end
 
 userpatch.registerPatchPluginFunc("bookshelf", patchBookshelf)
