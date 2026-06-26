@@ -10,6 +10,6 @@ We also have limited support for the plugins **Coverbrowser**, **Bookshelf**, an
 If you have a request for a specific override you'd like to see, please submit an [Issue](https://github.com/emilyy3k/KOReader.patches/issues) or even make a [Pull Request](https://github.com/emilyy3k/KOReader.patches/pulls)!
 
 ## Installing
-Either use [appstore.koplugin](https://github.com/omer-faruq/appstore.koplugin) to manage and update your patch or manually copy `2--ultimate-fonts.lua` into your `/koreader/data/patches` folder.
+Either use [appstore.koplugin](https://github.com/omer-faruq/appstore.koplugin) to manage and update your patch or manually copy `2--ultimate-fonts.lua` into your `/koreader/patches` folder.
 
 <img width="600" height="800" alt="bb" src="https://github.com/user-attachments/assets/e70ff823-ecd2-4d27-bf75-c077da0b439b" />
