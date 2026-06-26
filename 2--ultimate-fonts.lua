@@ -1,5 +1,6 @@
+---@diagnostic disable: duplicate-set-field
 local logger = require("logger")
-logger.info("Applying custom UI fonts patch")
+logger.info("[Ultimate Fonts]: Applying fonts patch")
 
 local ReaderFont = require("apps/reader/modules/readerfont")
 local Font = require("ui/font")
@@ -14,6 +15,8 @@ local InfoMessage = require("ui/widget/infomessage")
 local DictQuickLookup = require("ui/widget/dictquicklookup")
 local FileManagerMenu = require("apps/filemanager/filemanagermenu")
 local ReaderMenu = require("apps/reader/modules/readermenu")
+local userpatch = require("userpatch")
+
 local INHERITED_MENU_PREFIX = "\u{2592}\u{200A}"
 
 local function showUIFontRestartPrompt()
@@ -151,6 +154,54 @@ local function saveFontOverride(setting_keys, font_path, font_name)
 		G_reader_settings:delSetting(setting_keys.name)
 	end
 end
+
+local function rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	if not widget then return end
+	if widget._font_patch_applied then return end
+
+	local cur_face = widget.face
+	local resolved
+	if override_class and option then
+		if option and option.setting_suffix then
+			resolved = override_class:getFontPath(option.setting_suffix)
+		elseif type(option) == "string" then
+			-- Backward-compatible: accept a setting suffix or a fully resolved font path.
+			resolved = override_class:getFontPath(option) or option
+		end
+	else
+		resolved = cur_face and cur_face.ftname
+	end
+	local new_size = font_size or (cur_face and cur_face.orig_size) or 18
+	if resolved == (cur_face and cur_face.ftname)
+		and new_size == (cur_face and cur_face.orig_size) then return end
+	local new_face = resolved and Font:getFace(resolved, new_size)
+	if not new_face or new_face == cur_face then return end
+	if widget.bold then
+		widget.bold = true
+	end
+	widget.face = new_face
+	widget:free(true)
+	widget._font_patch_applied = true
+end
+
+local function rebuildTextBoxWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	widget:init()
+end
+
+local function rebuildTextWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	widget:updateSize()
+end
+
+local function rebuildMakeColoredTextWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	if widget._inner then
+		rebuildTextWidget(widget._inner, override_class, option, font_size, want_bold, want_italic)
+		widget._inner:updateSize()
+		widget.dimen = widget._inner:getSize()
+	end
+end
+
 
 --------------------------------------------------------------------------------
 -- 2. UI FONT LOGIC
@@ -394,8 +445,31 @@ function FontOverride:new (o)
 	return o
 end
 
+function FontOverride:getFontOption(option_key)
+	if not option_key then
+		return nil
+	end
+
+	local option = self.FONT_OPTIONS and self.FONT_OPTIONS[option_key]
+	if option then
+		return option
+	end
+
+	if type(option_key) == "string" and self.FONT_OPTIONS then
+		for _, candidate in pairs(self.FONT_OPTIONS) do
+			if candidate.setting_suffix == option_key then
+				return candidate
+			end
+		end
+	end
+
+	return nil
+end
+
 function FontOverride:getFontSettingKeys(option_key)
-	return getScopedFontSettingKeys(self.SETTINGS_KEY, self.FONT_OPTIONS[option_key].setting_suffix)
+	local option = self:getFontOption(option_key)
+	local setting_suffix = option and option.setting_suffix or option_key
+	return getScopedFontSettingKeys(self.SETTINGS_KEY, setting_suffix)
 end
 
 function FontOverride:getFontOverridePath()
@@ -411,7 +485,8 @@ function FontOverride:getFontBasePath()
 end
 
 function FontOverride:getDefaultFontPath(option_key)
-	return getRegularFontPath(Font.fontmap[self.FONT_OPTIONS[option_key].default_face_name])
+	local option = self:getFontOption(option_key)
+	return option and getRegularFontPath(Font.fontmap[option.default_face_name]) or nil
 end
 
 function FontOverride:hasFontSlotOverride(option_key)
@@ -485,7 +560,11 @@ end
 function FontOverride:getFace(option_key, font_size)
 	
 	local font_path = self:getFontPath(option_key)
-	local default_face = Font:getFace(self.FONT_OPTIONS[option_key].default_face_name)
+	local option = self:getFontOption(option_key)
+	local default_face = option and Font:getFace(option.default_face_name)
+	if not default_face then
+		return font_path and Font:getFace(font_path, font_size) or nil
+	end
 	local font_size = font_size or default_face.orig_size
 	if font_path then
 		return Font:getFace(font_path, font_size)
@@ -494,7 +573,7 @@ function FontOverride:getFace(option_key, font_size)
 end
 
 --------------------------------------------------------------------------------
--- 3. MAIN MENU FONT LOGIC
+-- MAIN MENU FONT LOGIC
 --------------------------------------------------------------------------------
 
 local TouchMenu = require("ui/widget/touchmenu")
@@ -544,13 +623,13 @@ local function getTouchMenuItemClass()
 
 	touchmenu_item_class_lookup_attempted = true
 	if not debug or not debug.getupvalue then
-		logger.warn("Ultimate Fonts: debug.getupvalue unavailable, main menu item font override limited to footer text")
+		logger.warn("[Ultimate Fonts]: debug.getupvalue unavailable, main menu item font override limited to footer text")
 		return nil
 	end
 
 	local update_items_func = original_TouchMenu_updateItems or TouchMenu.updateItems
 	if not update_items_func then
-		logger.warn("Ultimate Fonts: TouchMenu.updateItems unavailable, main menu item font override limited to footer text")
+		logger.warn("[Ultimate Fonts]: TouchMenu.updateItems unavailable, main menu item font override limited to footer text")
 		return nil
 	end
 
@@ -566,7 +645,7 @@ local function getTouchMenuItemClass()
 	end
 
 	if not cached_touchmenu_item_class then
-		logger.warn("Ultimate Fonts: could not resolve TouchMenuItem upvalue, main menu item font override limited to footer text")
+		logger.warn("[Ultimate Fonts]: could not resolve TouchMenuItem upvalue, main menu item font override limited to footer text")
 	end
 
 	return cached_touchmenu_item_class
@@ -594,19 +673,21 @@ local function applyMainMenuFontToTouchMenu(touchmenu)
 end
 
 original_TouchMenu_init = TouchMenu.init
+---@diagnostic disable-next-line: duplicate-set-field
 function TouchMenu:init(...)
 	applyMainMenuFontToTouchMenu(self)
 	return original_TouchMenu_init(self, ...)
 end
 
 original_TouchMenu_updateItems = TouchMenu.updateItems
+---@diagnostic disable-next-line: duplicate-set-field
 function TouchMenu:updateItems(...)
 	applyMainMenuFontToTouchMenu(self)
 	return original_TouchMenu_updateItems(self, ...)
 end
 
 --------------------------------------------------------------------------------
--- 4. DICTIONARY FONT LOGIC
+-- DICTIONARY FONT LOGIC
 --------------------------------------------------------------------------------
 
 local DICT_FONT_KEY = "dictquicklookup"
@@ -640,6 +721,7 @@ local DictQuickLookupOverrides = FontOverride:new{
 
 local original_DictQuickLookup_init = DictQuickLookup.init
 
+---@diagnostic disable-next-line: duplicate-set-field
 function DictQuickLookup:init(...)
 	self.dict_font_size = G_reader_settings:readSetting("dict_font_size") or 20
 	self.content_face = DictQuickLookupOverrides:getFace(DictQuickLookupOverrides.FONT_OPTIONS.content_face.setting_suffix, self.dict_font_size)
@@ -746,6 +828,7 @@ local InfoMessageOverrides = FontOverride:new{
 
 
 local original_InfoMessageWidget_init = InfoMessageWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function InfoMessageWidget:init(...)
 	if self.monospace_font then
 		self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.text_face_monospace.setting_suffix)
@@ -756,6 +839,7 @@ function InfoMessageWidget:init(...)
 end
 
 local original_ConfirmBoxWidget_init = ConfirmBoxWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ConfirmBoxWidget:init(...)
 	self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.confirmbox_face.setting_suffix)
 	return original_ConfirmBoxWidget_init(self, ...)
@@ -814,6 +898,7 @@ local ButtonOverrides = FontOverride:new{
 
 local ButtonWidget = require("ui/widget/button")
 local original_ButtonWidget_init = ButtonWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ButtonWidget:init(...)
 	if self.menu_style then
 		self.text_font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.menu_button_face.setting_suffix)
@@ -825,6 +910,7 @@ end
 
 local ButtonDialogWidget = require("ui/widget/buttondialog")
 local original_ButtonDialogWidget_init = ButtonDialogWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ButtonDialogWidget:init(...)
 	self.title_face  = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_title_face.setting_suffix)
 	self.info_face = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_info_face.setting_suffix)
@@ -833,6 +919,7 @@ end
 
 local ButtonProgressWidget = require("ui/widget/buttonprogresswidget")
 local original_ButtonProgressWidget_init = ButtonProgressWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function ButtonProgressWidget:init(...)
 	self.font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.button_progress_face.setting_suffix)
 	return original_ButtonProgressWidget_init(self, ...)
@@ -873,6 +960,7 @@ local InputOverrides = FontOverride:new{
 
 local InputDialogWidget = require("ui/widget/inputdialog")
 local original_InputDialogWidget_init = InputDialogWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function InputDialogWidget:init(...)
 	self.input_face = InputOverrides:getFace(InputOverrides.FONT_OPTIONS.input_dialog_face.setting_suffix)
 	return original_InputDialogWidget_init(self, ...)
@@ -880,6 +968,7 @@ end
 
 local InputTextWidget = require("ui/widget/inputtext")
 local original_InputTextWidget_init = InputTextWidget.init
+---@diagnostic disable-next-line: duplicate-set-field
 function InputTextWidget:init(...)
 	self.input_face = InputOverrides:getFace(InputOverrides.FONT_OPTIONS.input_text_face.setting_suffix)
 	return original_InputTextWidget_init(self, ...)
@@ -926,6 +1015,7 @@ local TitlebarOverrides = FontOverride:new{
 }
 
 
+---@diagnostic disable-next-line: duplicate-set-field
 function TitlebarWidget:init(...)
 	self.title_face_fullscreen = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.title_face_fullscreen.setting_suffix)
 	self.title_face_not_fullscreen = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.title_face_not_fullscreen.setting_suffix)
@@ -935,7 +1025,917 @@ function TitlebarWidget:init(...)
 end
 
 --------------------------------------------------------------------------------
--- 6. MENU INTEGRATION (Unified)
+-- Coverbrowser font logic
+--------------------------------------------------------------------------------
+
+local COVERBROWSER_FONT_KEY = "coverbrowser"
+local COVERBROWSER_FONT_PATH_SETTING = "coverbrowser_font_path"
+local COVERBROWSER_FONT_NAME_SETTING = "coverbrowser_font_name"
+
+local COVERBROWSER_FONT_OPTIONS = {
+	folder_title_font = {
+		setting_suffix = "folder_title_font",
+		label = _("Folder Title"),
+		default_face_name = "cfont",
+	},
+	book_title_font = {
+		setting_suffix = "book_title_font",
+		label = _("Book Title"),
+		default_face_name = "cfont",
+	},
+	book_authors_font = {
+		setting_suffix = "book_authors_font",
+		label = _("Book Authors"),
+		default_face_name = "cfont",
+	},
+	book_badge_font = {
+		setting_suffix = "book_badge_font",
+		label = _("Book Badge"),
+		default_face_name = "smallinfofont",
+	},
+}
+
+local COVERBROWSER_FONT_OPTION_LIST = {
+	COVERBROWSER_FONT_OPTIONS.folder_title_font,
+	COVERBROWSER_FONT_OPTIONS.book_title_font,
+	COVERBROWSER_FONT_OPTIONS.book_authors_font,
+	COVERBROWSER_FONT_OPTIONS.book_badge_font,
+}
+
+local CoverBrowserOverrides = FontOverride:new{
+	SETTINGS_KEY = COVERBROWSER_FONT_KEY,
+	FONT_PATH_SETTING = COVERBROWSER_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = COVERBROWSER_FONT_NAME_SETTING,
+	FONT_OPTIONS = COVERBROWSER_FONT_OPTIONS,
+	FONT_OPTION_LIST = COVERBROWSER_FONT_OPTION_LIST,
+}
+
+local function patchCoverBrowser(plugin)
+	local BookInfoManager = require("bookinfomanager")
+    local ListMenu = require("listmenu")
+
+    local ListMenuItem = userpatch.getUpValue(ListMenu._updateItemsBuildUI, "ListMenuItem")
+    if not ListMenuItem then return end
+    if ListMenuItem._fontpatch_applied then return end
+    ListMenuItem._fontpatch_applied = true
+
+    local original_update = ListMenuItem.update
+
+    function ListMenuItem:update(...)
+        local VerticalGroup = require("ui/widget/verticalgroup")
+        local TextBoxWidget = require("ui/widget/textboxwidget")
+
+        -- captured_bookinfo: { vgroup, wtitle, wauthors } — bookinfo path
+        -- captured_dir:      first wide TextBoxWidget created for directories (wleft)
+        -- captured_filename: last  wide TextBoxWidget created for files without bookinfo
+        --                    (the repeat-loop creates several; the last one is the keeper)
+        local captured_bookinfo = nil
+        local captured_dir      = nil
+
+        local orig_VG_new  = VerticalGroup.new
+        local orig_TBW_new = TextBoxWidget.new
+
+        VerticalGroup.new = function(klass, t, ...)
+            local vg = orig_VG_new(klass, t, ...)
+            if not captured_bookinfo and t and t[1] and type(t[1].text) == "string"
+                and t[1].width and t[1].width > 100 then
+                captured_bookinfo = { vgroup = vg, wtitle = t[1], wauthors = t[2] }
+            end
+            return vg
+        end
+
+        TextBoxWidget.new = function(klass, t, ...)
+            local widget = orig_TBW_new(klass, t, ...)
+            if t and type(t.text) == "string" and t.width and t.width > 100 then
+                if self.is_directory and not captured_dir then
+                    captured_dir = widget
+                end
+            end
+            return widget
+        end
+
+        original_update(self, ...)
+        VerticalGroup.new = orig_VG_new
+        TextBoxWidget.new = orig_TBW_new
+
+        -- Rebuild a TextBoxWidget with a new font path/size.
+        local function rebuildWidget(widget, option_key, font_size, want_bold, want_italic)
+            if not widget then return end
+            local cur_face = widget.face
+            local resolved
+            if option_key then
+				local font_options = CoverBrowserOverrides.FONT_OPTIONS
+				local option_entry = font_options and font_options[option_key]
+				if option_entry and option_entry.setting_suffix then
+					resolved = CoverBrowserOverrides:getFontPath(option_entry.setting_suffix)
+				elseif type(option_key) == "string" then
+					-- Backward-compatible: accept a setting suffix or a fully resolved font path.
+					resolved = CoverBrowserOverrides:getFontPath(option_key) or option_key
+				end
+            else
+                resolved = cur_face and cur_face.ftname
+            end
+            local new_size = font_size or (cur_face and cur_face.orig_size) or 18
+            if resolved == (cur_face and cur_face.ftname)
+                and new_size == (cur_face and cur_face.orig_size) then return end
+            local new_face = resolved and Font:getFace(resolved, new_size)
+            if not new_face or new_face == cur_face then return end
+            widget.face = new_face
+            widget:free(true)
+            widget:init()
+        end
+
+        -- Bookinfo found: apply title + authors fonts
+        if captured_bookinfo and self.bookinfo_found and not self.is_directory then
+            local book_title_font_path = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_title_font.setting_suffix)
+            local book_authors_font_path = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_authors_font.setting_suffix)
+            if book_title_font_path or book_authors_font_path then
+                rebuildWidget(captured_bookinfo.wtitle,   book_title_font_path)
+                rebuildWidget(captured_bookinfo.wauthors, book_authors_font_path)
+            end
+        end
+
+        -- Directory: apply folder font
+        if captured_dir and self.is_directory then
+            local fp = CoverBrowserOverrides.FONT_OPTIONS.folder_title_font.setting_suffix
+			local folder_font_path = CoverBrowserOverrides:getFontPath(fp)
+            if folder_font_path then
+                rebuildWidget(captured_dir, folder_font_path)
+            end
+        end
+    end
+end
+
+userpatch.registerPatchPluginFunc("coverbrowser", patchCoverBrowser)
+
+--------------------------------------------------------------------------------
+-- Bookshelf plugin font logic
+--------------------------------------------------------------------------------
+
+local BOOKSHELF_FONT_KEY = "bookshelf"
+local BOOKSHELF_FONT_PATH_SETTING = "bookshelf_font_path"
+local BOOKSHELF_FONT_NAME_SETTING = "bookshelf_font_name"
+
+local BOOKSHELF_FONT_OPTIONS = {
+	book_title_font = {
+		setting_suffix = "book_title_font",
+		label = _("Book Title"),
+		default_face_name = "cfont",
+	},
+	book_authors_font = {
+		setting_suffix = "book_authors_font",
+		label = _("Book Authors"),
+		default_face_name = "cfont",
+	},
+	book_description_font = {
+		setting_suffix = "book_description_font",
+		label = _("Book Description"),
+		default_face_name = "infont",
+	},
+	book_metadata_font = {
+		setting_suffix = "book_metadata_font",
+		label = _("Book Metadata"),
+		default_face_name = "x_smallinfofont",
+	},
+	book_progress_font = {
+		setting_suffix = "book_progress_font",
+		label = _("Book Progress"),
+		default_face_name = "x_smallinfofont",
+	},
+	book_rating_font = {
+		setting_suffix = "book_rating_font",
+		label = _("Book Rating"),
+		default_face_name = "x_smallinfofont",
+	},
+	book_status_font = {
+		setting_suffix = "book_status_font",
+		label = _("Device Status"),
+		default_face_name = "x_smallinfofont",
+	},
+	book_tags_font = {
+		setting_suffix = "book_tags_font",
+		label = _("Book Tags"),
+		default_face_name = "x_smallinfofont",
+	},
+	chip_label_font = {
+		setting_suffix = "chip_label_font",
+		label = _("Chip Label"),
+		default_face_name = "infofont",
+	},
+	count_badge_font = {
+		setting_suffix = "count_badge_font",
+		label = _("Cover Series Count Badge"),
+		default_face_name = "infofont",
+	},
+	folder_label_font = {
+		setting_suffix = "folder_label_font",
+		label = _("Folder/Stack Label"),
+		default_face_name = "infofont",
+	},
+	book_cover_badge_font = {
+		setting_suffix = "book_cover_badge_font",
+		label = _("Book Cover Badge"),
+		default_face_name = "infofont",
+	},
+	start_menu_font = {
+		setting_suffix = "start_menu_font",
+		label = _("Start Menu"),
+		default_face_name = "cfont",
+	},
+	cover_label_fullscreen_font = {
+		setting_suffix = "book_cover_label_fullscreen_font",
+		label = _("Book Cover Label (Fullscreen)"),
+		default_face_name = "infofont",
+	},
+	book_menu_bookmark_action_font = {
+		setting_suffix = "book_menu_bookmark_action_font",
+		label = _("Book Menu Header - Bookmark Action"),
+		default_face_name = "infofont",
+	},
+}
+
+local BOOKSHELF_FONT_OPTION_LIST = {
+	BOOKSHELF_FONT_OPTIONS.book_title_font,
+	BOOKSHELF_FONT_OPTIONS.book_authors_font,
+	BOOKSHELF_FONT_OPTIONS.book_description_font,
+	BOOKSHELF_FONT_OPTIONS.book_metadata_font,
+	BOOKSHELF_FONT_OPTIONS.book_progress_font,
+	BOOKSHELF_FONT_OPTIONS.book_rating_font,
+	BOOKSHELF_FONT_OPTIONS.book_status_font,
+	BOOKSHELF_FONT_OPTIONS.book_tags_font,
+	BOOKSHELF_FONT_OPTIONS.chip_label_font,
+	BOOKSHELF_FONT_OPTIONS.count_badge_font,
+	BOOKSHELF_FONT_OPTIONS.book_cover_badge_font,
+	BOOKSHELF_FONT_OPTIONS.folder_label_font,
+	BOOKSHELF_FONT_OPTIONS.start_menu_font,
+	BOOKSHELF_FONT_OPTIONS.cover_label_fullscreen_font,
+}
+
+local BookshelfOverrides = FontOverride:new{
+	SETTINGS_KEY = BOOKSHELF_FONT_KEY,
+	FONT_PATH_SETTING = BOOKSHELF_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = BOOKSHELF_FONT_NAME_SETTING,
+	FONT_OPTIONS = BOOKSHELF_FONT_OPTIONS,
+	FONT_OPTION_LIST = BOOKSHELF_FONT_OPTION_LIST,
+}
+
+local function patchBookshelf(plugin)
+	local bookshelfHeroCard = require("lib/bookshelf_hero_card")
+	local bookshelfChipBar = require("lib/bookshelf_chip_bar")
+	local bookshelfCountBadge = require("lib/bookshelf_count_badge")
+	local bookshelfSpineWidget = require("lib/bookshelf_spine_widget")
+	local bookshelfStartMenu = require("lib/bookshelf_start_menu")
+	local bookshelfShelfRow = require("lib/bookshelf_shelf_row")
+
+    local original_hero_card_build = bookshelfHeroCard._buildRightColumn
+	local original_init_chips = bookshelfChipBar._initChips
+	local original_render_badge = bookshelfCountBadge.render
+	local original_spine_widget_render = bookshelfSpineWidget._renderShadowedCard
+	local original_start_menu_applyfontscale = bookshelfStartMenu._applyFontScale
+	local original_shelf_row_build = bookshelfShelfRow.new
+
+
+    bookshelfHeroCard._buildRightColumn = function(self, book, regions, state, dimen)
+		regions.title.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_title_font.setting_suffix) or regions.title.font_face
+		regions.author.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_authors_font.setting_suffix) or regions.author.font_face
+		regions.description.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_description_font.setting_suffix) or regions.description.font_face
+		regions.metadata.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_metadata_font.setting_suffix) or regions.metadata.font_face
+		regions.progress.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_progress_font.setting_suffix) or regions.progress.font_face
+		regions.rating.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_rating_font.setting_suffix) or regions.rating.font_face
+		regions.status.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_status_font.setting_suffix) or regions.status.font_face
+		regions.tags.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_tags_font.setting_suffix) or regions.tags.font_face
+        
+		return original_hero_card_build(self, book, regions, state, dimen)
+    end
+
+	bookshelfChipBar._initChips = function(self, ...)
+		local TextWidget = require("ui/widget/textwidget")
+
+		local chipbar_widgets = {}
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+            local widget = orig_TW_new(klass, t, ...)
+            table.insert(chipbar_widgets, #chipbar_widgets + 1, widget)
+			return widget
+        end
+
+		-- Run the original _initChips with the patched TextWidget.new to capture references to the
+		-- chip label widgets for later font updates.
+        original_init_chips(self, ...)
+		
+		TextWidget.new = orig_TW_new
+
+		if chipbar_widgets then
+            local fp = BookshelfOverrides.FONT_OPTIONS.chip_label_font.setting_suffix
+			local folder_font_path = BookshelfOverrides:getFontPath(fp)
+            if folder_font_path then
+				for _, widget in ipairs(chipbar_widgets) do
+					local font_size = widget.face and widget.face.size or 18
+                	rebuildTextWidget(widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.chip_label_font, font_size)
+				end
+            end
+        end
+		
+	end
+
+	bookshelfCountBadge.render = function(self, ...)
+		local TextWidget = require("ui/widget/textwidget")
+
+		local badge_widget = nil
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+			local widget = orig_TW_new(klass, t, ...)
+			if not badge_widget then
+				badge_widget = widget
+			end
+
+			return widget
+		end
+
+		local result = original_render_badge(self, ...)
+
+		TextWidget.new = orig_TW_new
+
+		if badge_widget then
+			rebuildTextWidget(badge_widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.count_badge_font) -- rebuild the whole group to avoid layout issues from different font sizes
+        end
+
+		return result
+	end
+
+	-- bookshelfFolderCard.build = function(self, ...)
+	-- 	local TextBoxWidget = require("ui/widget/textboxwidget")
+
+	-- 	local label_widget = nil
+
+	-- 	local orig_TBW_new = TextBoxWidget.new
+
+	-- 	TextBoxWidget.new = function(klass, t, ...)
+	-- 		t.face = BookshelfOverrides:getFace(BookshelfOverrides.FONT_OPTIONS.folder_label_font.setting_suffix) or t.face
+	-- 		t.bold = true
+	-- 		local widget = orig_TBW_new(klass, t, ...)
+	-- 		-- if not label_widget and widget and widget.text and widget.text ~= "Mg" then
+	-- 		-- 	label_widget = widget
+	-- 		-- end
+	-- 		--widget:init()
+
+	-- 		return widget
+	-- 	end
+
+	-- 	local result = original_folder_card_build(self, ...)
+
+	-- 	TextBoxWidget.new = orig_TBW_new
+
+	-- 	-- if label_widget then
+	-- 	-- 	rebuildTextBoxWidget(label_widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.folder_label_font) -- rebuild the whole group to avoid layout issues from different font sizes
+    --     -- end
+
+	-- 	return result
+	-- end
+
+	bookshelfSpineWidget._renderShadowedCard = function(self, ...)		
+		local TextWidget = require("ui/widget/textwidget")
+
+		local label_widgets = {}
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+			local widget = orig_TW_new(klass, t, ...)
+			table.insert(label_widgets, #label_widgets+1, widget)
+
+			return widget
+		end
+
+		local result = original_spine_widget_render(self, ...)
+
+		TextWidget.new = orig_TW_new
+
+		if label_widgets then
+			for _, widget in ipairs(label_widgets) do
+				rebuildTextWidget(widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.book_cover_badge_font) -- rebuild the whole group to avoid layout issues from different font sizes
+			end
+		end
+
+		return result
+	end
+
+	bookshelfStartMenu._applyFontScale = function(self)
+		original_start_menu_applyfontscale(self)
+
+		self._row_face = BookshelfOverrides:getFace(BookshelfOverrides.FONT_OPTIONS.start_menu_font.setting_suffix, self._row_face.size) or self._row_face
+	end
+
+end
+
+userpatch.registerPatchPluginFunc("bookshelf", patchBookshelf)
+
+
+--------------------------------------------------------------------------------
+-- Simple UI font logic
+--------------------------------------------------------------------------------
+
+
+local SUI_COVERDECK_FONT_OPTIONS = {
+	coverdeck_title_font = {
+		setting_suffix = "coverdeck_title_font",
+		label = _("Coverdeck Title"),
+		default_face_name = "cfont",
+	},
+	coverdeck_stats_font = {
+		setting_suffix = "coverdeck_stats_font",
+		label = _("Coverdeck Stats"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_BOTTOMBAR_FONT_OPTIONS = {
+	bottom_nav_font = {
+		setting_suffix = "bottom_nav_font",
+		label = _("Bottom Bar Tabs"),
+		default_face_name = "cfont",
+	},
+	bottom_pagination_font = {
+		setting_suffix = "bottom_pagination_font",
+		label = _("Bottom Bar Pagination"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_READING_STATS_FONT_OPTIONS = {
+	stats_value_font = {
+		setting_suffix = "stats_value_font",
+		label = _("Reading Stats Values"),
+		default_face_name = "cfont",
+	},
+	stats_label_font = {
+		setting_suffix = "stats_label_font",
+		label = _("Reading Stats Labels"),
+		default_face_name = "cfont",
+	},
+	stats_placeholder_font = {
+		setting_suffix = "stats_placeholder_font",
+		label = _("Reading Stats Placeholder"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_STAT_WINDOW_FONT_OPTIONS = {
+	title_font = {
+		setting_suffix = "title_font",
+		label = _("Book Title"),
+		default_face_name = "cfont",
+	},
+	author_font = {
+		setting_suffix = "author_font",
+		label = _("Book Author"),
+		default_face_name = "cfont",
+	},
+	label_font = {
+		setting_suffix = "label_font",
+		label = _("Stats Label"),
+		default_face_name = "cfont",
+	},
+	value_font = {
+		setting_suffix = "value_font",
+		label = _("Stats Value (Number)"),
+		default_face_name = "cfont",
+	},
+	section_label_font = {
+		setting_suffix = "section_label_font",
+		label = _("Stats Section Label"),
+		default_face_name = "cfont",
+	},
+	year_header_font = {
+		setting_suffix = "year_header_font",
+		label = _("Stats Year Header"),
+		default_face_name = "cfont",
+	},
+	stat_sub_label = {
+		setting_suffix = "stat_sub_label",
+		label = _("Stats Sub-Label"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_QUOTE_FONT_OPTIONS = {
+	quote_font = {
+		setting_suffix = "quote_font",
+		label = _("Quote Text"),
+		default_face_name = "cfont",
+	},
+	attribution_font = {
+		setting_suffix = "attribution_font",
+		label = _("Quote Attribution"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_CLOCK_FONT_OPTIONS = {
+	clock_font = {
+		setting_suffix = "clock_font",
+		label = _("Clock (Numbers)"),
+		default_face_name = "cfont",
+	},
+	word_font = {
+		setting_suffix = "word_font",
+		label = _("Clock (Words)"),
+		default_face_name = "cfont",
+	},
+	date_font = {
+		setting_suffix = "date_font",
+		label = _("Date Text"),
+		default_face_name = "cfont",
+	},
+	batt_font = {
+		setting_suffix = "batt_font",
+		label = _("Battery Text"),
+		default_face_name = "cfont",
+	},
+}
+
+
+
+local SUI_CLOCK_FONT_OPTION_LIST = {
+	SUI_CLOCK_FONT_OPTIONS.clock_font,
+	SUI_CLOCK_FONT_OPTIONS.word_font,
+	SUI_CLOCK_FONT_OPTIONS.date_font,
+	SUI_CLOCK_FONT_OPTIONS.batt_font,
+}
+
+local SUI_QUOTE_FONT_OPTION_LIST = {
+	SUI_QUOTE_FONT_OPTIONS.quote_font,
+	SUI_QUOTE_FONT_OPTIONS.attribution_font,
+}
+
+local SUI_STAT_WINDOW_FONT_OPTION_LIST = {
+	SUI_STAT_WINDOW_FONT_OPTIONS.title_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.author_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.value_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.label_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.section_label_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.year_header_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.stat_sub_label,
+}
+
+local SUI_COVERDECK_FONT_OPTION_LIST = {
+	SUI_COVERDECK_FONT_OPTIONS.coverdeck_title_font,
+	SUI_COVERDECK_FONT_OPTIONS.coverdeck_stats_font,
+}
+
+local SUI_BOTTOMBAR_FONT_OPTION_LIST = {
+	SUI_BOTTOMBAR_FONT_OPTIONS.bottom_nav_font,
+	SUI_BOTTOMBAR_FONT_OPTIONS.bottom_pagination_font,
+}
+
+local SUI_READING_STATS_FONT_OPTION_LIST = {
+	SUI_READING_STATS_FONT_OPTIONS.stats_value_font,
+	SUI_READING_STATS_FONT_OPTIONS.stats_label_font,
+	SUI_READING_STATS_FONT_OPTIONS.stats_placeholder_font,
+}
+
+local SUIClockOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_clock",
+	FONT_PATH_SETTING = "simpleui_clock_font_path",
+	FONT_NAME_SETTING = "simpleui_clock_font_name",
+	FONT_OPTIONS = SUI_CLOCK_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_CLOCK_FONT_OPTION_LIST,
+}
+
+local SUIQuoteOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_quote",
+	FONT_PATH_SETTING = "simpleui_quote_font_path",
+	FONT_NAME_SETTING = "simpleui_quote_font_name",
+	FONT_OPTIONS = SUI_QUOTE_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_QUOTE_FONT_OPTION_LIST,
+}
+
+local SUICoverdeckOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_coverdeck",
+	FONT_PATH_SETTING = "simpleui_coverdeck_font_path",
+	FONT_NAME_SETTING = "simpleui_coverdeck_font_name",
+	FONT_OPTIONS = SUI_COVERDECK_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_COVERDECK_FONT_OPTION_LIST,
+}
+
+local SUIBottombarOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_bottombar",
+	FONT_PATH_SETTING = "simpleui_bottombar_font_path",
+	FONT_NAME_SETTING = "simpleui_bottombar_font_name",
+	FONT_OPTIONS = SUI_BOTTOMBAR_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_BOTTOMBAR_FONT_OPTION_LIST,
+}
+
+local SUIReadingStatsOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_reading_stats",
+	FONT_PATH_SETTING = "simpleui_reading_stats_font_path",
+	FONT_NAME_SETTING = "simpleui_reading_stats_font_name",
+	FONT_OPTIONS = SUI_READING_STATS_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_READING_STATS_FONT_OPTION_LIST,
+}
+
+local SUIStatWindowOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_stats_window",
+	FONT_PATH_SETTING = "simpleui_stats_window_font_path",
+	FONT_NAME_SETTING = "simpleui_stats_window_font_name",
+	FONT_OPTIONS = SUI_STAT_WINDOW_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_STAT_WINDOW_FONT_OPTION_LIST,
+}
+
+local function patchSimpleUI(plugin)
+	local SUIStyle = require("sui_style")
+
+	local SUICoverdeck = require("desktop_modules/module_coverdeck")
+
+	local original_coverdeck_build = SUICoverdeck.build
+
+	SUICoverdeck.build = function(self, w, ctx)
+		local UI = require("sui_core")
+
+		local original_UI_makeColoredText = UI.makeColoredText
+
+		local widgets = {}
+
+		UI.makeColoredText = function(opts)	
+			local widget = original_UI_makeColoredText(opts)
+			if widget._inner and widget._inner.face and widget._inner.face.realname == SUIStyle.FACE_ICONS then
+	 			return widget
+			end
+			table.insert(widgets, #widgets + 1, widget)
+			--logger:info("SUICoverdeck.build.makeColoredText called with widget:", widget)
+			return widget
+		end
+
+		local result = original_coverdeck_build(self, w, ctx)
+
+		UI.makeColoredText = original_UI_makeColoredText
+
+		for _, widget in ipairs(widgets) do
+			if widget._inner and widget._inner.bold == true then
+				rebuildMakeColoredTextWidget(widget, SUICoverdeckOverrides, SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_title_font)
+			elseif widget._inner and widget._inner.bold == false then
+				rebuildMakeColoredTextWidget(widget, SUICoverdeckOverrides, SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_stats_font)
+			end
+		end
+
+		return result
+	end
+
+	local SUIReadingStats = require("desktop_modules/module_reading_stats")
+
+	local original_SUIReadingStats_build = SUIReadingStats.build
+
+	SUIReadingStats.build = function(self, w, ctx)
+		local Config = require("sui_config")
+
+		local scale     = Config.getModuleScale("reading_stats", ctx and ctx.pfx)
+		local text_scale = scale * (Config.getRSTextScalePct() / 100)
+		local _val_fs = math.max(8, math.floor(SUIStyle.FS_TITLE * text_scale))
+		local _lbl_fs = math.max(6, math.floor(SUIStyle.FS_DETAIL * text_scale))
+		local _ph_fs  = math.max(8, math.floor(SUIStyle.FS_BODY  * scale))
+
+		local UI = require("sui_core")
+
+		local original_UI_makeColoredText = UI.makeColoredText
+
+		local widgets = {}
+
+		UI.makeColoredText = function(opts)	
+			local widget = original_UI_makeColoredText(opts)
+			if widget._inner and widget._inner.face and widget._inner.face.realname == SUIStyle.FACE_ICONS then
+	 			return widget
+			end
+			table.insert(widgets, #widgets + 1, widget)
+			return widget
+		end
+
+		local result = original_SUIReadingStats_build(self, w, ctx)
+
+		UI.makeColoredText = original_UI_makeColoredText
+
+		for _, widget in ipairs(widgets) do
+			local font_size = widget._inner and widget._inner.face and widget._inner.face.size or 18
+			if font_size == _val_fs then
+				rebuildMakeColoredTextWidget(widget, SUIReadingStatsOverrides, SUIReadingStatsOverrides.FONT_OPTIONS.stats_value_font)
+			elseif font_size == _lbl_fs then
+				rebuildMakeColoredTextWidget(widget, SUIReadingStatsOverrides, SUIReadingStatsOverrides.FONT_OPTIONS.stats_label_font)
+			elseif font_size == _ph_fs then
+				rebuildMakeColoredTextWidget(widget, SUIReadingStatsOverrides, SUIReadingStatsOverrides.FONT_OPTIONS.stats_placeholder_font)
+			end
+		end
+
+		return result
+	end
+
+	local SUIQuote = require("desktop_modules/module_quote")
+
+	local original_SUIQuote_build = SUIQuote.build
+
+	SUIQuote.build = function(w, ctx)
+		local Config = require("sui_config")
+
+		local scale      = Config.getModuleScale("quote", ctx.pfx)
+   		local quote_fs   = math.max(7, math.floor(SUIStyle.FS_BODY * scale))
+    	local attr_fs    = math.max(6, math.floor(SUIStyle.FS_DETAIL * scale))
+		
+
+		local TextBoxWidget = require("ui/widget/textboxwidget")
+
+		local original_TBW_new = TextBoxWidget.new
+
+		local widgets = {}
+
+		TextBoxWidget.new = function(klass, t, ...)
+			local widget = original_TBW_new(klass, t, ...)
+			if widget._inner and widget._inner.face and widget._inner.face.realname == SUIStyle.FACE_ICONS then
+	 			return widget
+			end
+			table.insert(widgets, #widgets + 1, widget)
+			return widget
+		end
+
+		local result = original_SUIQuote_build(w, ctx)
+
+		TextBoxWidget.new = original_TBW_new
+
+		for _, widget in ipairs(widgets) do
+			local font_size = widget.face and widget.face.size or 18
+			if font_size == quote_fs then
+				rebuildTextBoxWidget(widget, SUIQuoteOverrides, SUIQuoteOverrides.FONT_OPTIONS.quote_font)
+			elseif font_size == attr_fs then
+				rebuildTextBoxWidget(widget, SUIQuoteOverrides, SUIQuoteOverrides.FONT_OPTIONS.attribution_font)
+			end
+		end
+
+		return result
+	end
+
+	local SUIClock = require("desktop_modules/module_clock")
+
+	local original_SUIClock_build = SUIClock.build
+
+	SUIClock.build = function(self, w, ctx)
+		local Config = require("sui_config")
+
+		local scale     = Config.getModuleScale("clock", ctx and ctx.pfx)
+		local clock_fs      = math.max(10, math.floor(75  * scale))
+    	local word_fs       = math.max(10, math.floor(50   * scale))
+		local date_fs       = math.max(8,  math.floor(SUIStyle.FS_SUBTITLE   * scale))
+    	local batt_fs       = math.max(7,  math.floor(SUIStyle.FS_BODY   * scale))
+
+		local UI = require("sui_core")
+
+		local original_UI_makeColoredText = UI.makeColoredText
+
+		local widgets = {}
+
+		UI.makeColoredText = function(opts)	
+			local widget = original_UI_makeColoredText(opts)
+			if widget._inner and widget._inner.face and widget._inner.face.realname == SUIStyle.FACE_ICONS then
+	 			return widget
+			end
+			table.insert(widgets, #widgets + 1, widget)
+			return widget
+		end
+
+		local result = original_SUIClock_build(self, w, ctx)
+
+		UI.makeColoredText = original_UI_makeColoredText
+
+		for _, widget in ipairs(widgets) do
+			local font_size = widget._inner and widget._inner.face and widget._inner.face.size or 18
+			if font_size == clock_fs then
+				rebuildMakeColoredTextWidget(widget, SUIClockOverrides, SUIClockOverrides.FONT_OPTIONS.clock_font)
+			elseif font_size == word_fs then
+				rebuildMakeColoredTextWidget(widget, SUIClockOverrides, SUIClockOverrides.FONT_OPTIONS.word_font)
+			elseif font_size == date_fs then
+				rebuildMakeColoredTextWidget(widget, SUIClockOverrides, SUIClockOverrides.FONT_OPTIONS.date_font)
+			elseif font_size == batt_fs then
+				rebuildMakeColoredTextWidget(widget, SUIClockOverrides, SUIClockOverrides.FONT_OPTIONS.batt_font)
+			end
+		end
+
+		return result
+	end
+
+	local SUIStatsWindows = require("sui_stats_windows")
+
+	local original_showbookstatsfromfile = SUIStatsWindows.showBookStatsFromFile
+	local original_showreadinginsightswindow = SUIStatsWindows.showReadingInsightsWindow
+
+	SUIStatsWindows.showBookStatsFromFile = function(self, ...)
+		local TextWidget = require("ui/widget/textwidget")
+
+		local captured_widgets = {}
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+            local widget = orig_TW_new(klass, t, ...)
+
+			if widget and widget.face and widget.face.realname == SUIStyle.FACE_ICONS then return widget end
+			if widget._font_patch_applied then return widget end
+
+            table.insert(captured_widgets, #captured_widgets + 1, widget)
+			return widget
+        end
+
+		-- Run the original _initChips with the patched TextWidget.new to capture references to the
+		-- chip label widgets for later font updates.
+        original_showbookstatsfromfile(self, ...)
+		
+		TextWidget.new = orig_TW_new
+
+		if captured_widgets then
+			for _, widget in ipairs(captured_widgets) do
+				--logger:info("Rebuilding TextWidget with font override for stats window:", widget)
+				if widget.face and widget.face.size == SUIStyle.FS_TITLE then
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.value_font)
+				elseif widget.face and widget.face.size == SUIStyle.FS_DETAIL then
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.label_font)
+				elseif widget.face and widget.face.size == SUIStyle.FS_SUBTITLE and widget.bold then
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.title_font)
+				elseif widget.face and widget.face.size == SUIStyle.FS_BODY and not widget.bold then
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.author_font)
+				end
+			end
+        end
+	end
+
+	SUIStatsWindows.showReadingInsightsWindow = function(self, ...)
+		local TextWidget = require("ui/widget/textwidget")
+
+		local captured_widgets = {}
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+            local widget = orig_TW_new(klass, t, ...)
+
+			if widget and widget.face and widget.face.realname == SUIStyle.FACE_ICONS then return widget end
+			if widget._font_patch_applied then return widget end
+
+            table.insert(captured_widgets, #captured_widgets + 1, widget)
+			return widget
+        end
+
+		-- Run the original _initChips with the patched TextWidget.new to capture references to the
+		-- chip label widgets for later font updates.
+        original_showreadinginsightswindow(self, ...)
+		
+		TextWidget.new = orig_TW_new
+
+		if captured_widgets then
+			for _, widget in ipairs(captured_widgets) do
+				
+				-- section label
+				if widget.face and widget.face.size == SUIStyle.FS_DETAIL and widget.bold then
+					logger:info("Rebuilding section label font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.section_label_font)
+					goto continue
+				-- today summary value
+				elseif widget.face and widget.face.size == math.floor(SUIStyle.FS_TITLE * 1.6) and widget.bold then
+					logger:info("Rebuilding stat value font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.value_font)
+					goto continue
+				-- today summary label
+				elseif widget.face and widget.face.size == SUIStyle.FS_DETAIL and not widget.bold then
+					logger:info("Rebuilding stat label font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.label_font)
+					goto continue
+				-- streak caption/sub-label
+				elseif widget.face and widget.face.size == SUIStyle.FS_CAPTION and not widget.bold then
+					logger:info("Rebuilding stat sub-label font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.stat_sub_label)
+					goto continue
+				-- stat row label
+				elseif widget.face and widget.face.size == SUIStyle.FS_BODY and not widget.bold then
+					logger:info("Rebuilding stat row label font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.label_font)
+					goto continue
+				-- stat row value
+				elseif widget.face and widget.face.size == SUIStyle.FS_BODY and widget.bold then
+					logger:info("Rebuilding stat row value font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.value_font)
+					goto continue
+				end
+				
+				logger:info("UNMODIFIED WIDGET:", widget)
+				::continue::
+			end
+        end
+		
+	end
+end
+
+userpatch.registerPatchPluginFunc("simpleui", patchSimpleUI)
+
+--------------------------------------------------------------------------------
+-- MENU INTEGRATION (Unified)
 --------------------------------------------------------------------------------
 
 local function getFontMenuSubsection(override, labels)
@@ -1086,36 +2086,54 @@ local function getFontMenuSubsection(override, labels)
 	}
 end
 
-local function getDictionaryFontMenuItem()
-	return {
-		text_func = function()
-			local dict_font = G_reader_settings:readSetting("dict_font")
-			if dict_font then
-				local display_name = dict_font
-				local cre = require("document/credocument"):engineInit()
-				local font_filename, font_faceindex = cre.getFontFaceFilenameAndFaceIndex(dict_font)
-				if not font_filename then
-					font_filename, font_faceindex = cre.getFontFaceFilenameAndFaceIndex(dict_font, nil, true)
-				end
-				if font_filename and font_faceindex then
-					display_name = FontList:getLocalizedFontName(font_filename, font_faceindex) or display_name
-				end
-				return T(_("Dictionary font: %1"), BD.wrap(display_name))
+local function getFontMenuSection(subsections, labels)
+	local labels = labels or {}
+	local menu_text = labels.menu_text or _("Fonts")
+	local shared_font_text = labels.shared_font_text or _("Shared font: %1")
+	local use_shared_font_text = labels.use_shared_font_text or _("Use shared font: %1")
+	local reset_item_text = labels.reset_item_text or _("Reset all font overrides in this category")
+	local reset_confirm_text = labels.reset_confirm_text or _("Reset all per-element overrides for this category and make them inherit the shared font or built-in defaults?")
+
+
+	local function resetGroupFontOverrides()
+		for override, _ in pairs(subsections) do
+			for _, option in ipairs(override:getOptionList()) do
+				override:clearFontSlotOverride(option.setting_suffix)
 			end
-			return _("Dictionary font")
-		end,
+		end
+	end
+
+	return {
+		text = menu_text,
 		sub_item_table_func = function()
-			return getGenericFontTable(ReaderFont, {
-				setting_key_path = "dict_font",
-				save_path_as_name = true,
-				restart_on_change = false,
-				mark_active_func = function(fname, fparams)
-					return fparams == G_reader_settings:readSetting("dict_font")
+			local item_table = {
+				{
+				text = reset_item_text,
+				callback = function(touchmenu_instance)
+					UIManager:show(ConfirmBox:new({
+						text = reset_confirm_text,
+						ok_text = _("Reset"),
+						ok_callback = function()
+							deferUIFontChange(function()
+								resetGroupFontOverrides()
+							end)
+						end,
+						cancel_text = _("Cancel"),
+					}))
 				end,
-			})
+				separator = true,
+			},
+			}
+			for override, label in pairs(subsections) do
+				table.insert(item_table, getFontMenuSubsection(override, label))
+			end
+			return makeRefreshableItemTable(item_table, function()
+				return getFontMenuSection(subsections, labels)
+			end)
 		end,
 	}
 end
+
 
 local function getUIFontMenuItem()
 	local function buildDefaultUIFontPickerTable()
@@ -1312,7 +2330,7 @@ local function hasMenuItem(order_section, item_id)
 end
 
 local function patchSettingsMenu(menu, order)
-	menu.menu_items.custom_fonts = {
+	menu.menu_items.ultimate_fonts = {
 		text = _("Ultimate Fonts"),
 		sub_item_table_func = function()
 			return {
@@ -1327,25 +2345,52 @@ local function patchSettingsMenu(menu, order)
 					menu_text = _("Info Message & Confirm Box fonts")}),
 				getFontMenuSubsection(ButtonOverrides, {
 					menu_text = _("Button fonts")}),
+				getFontMenuSubsection(CoverBrowserOverrides, {
+					menu_text = _("Cover Browser fonts")}),
+				getFontMenuSubsection(BookshelfOverrides, {
+					menu_text = _("Bookshelf fonts")}),
+				getFontMenuSection({
+					[SUIBottombarOverrides] = {
+						menu_text = _("Bottom Bar fonts"),
+					},
+					[SUIStatWindowOverrides] = {
+						menu_text = _("Stats Window fonts"),
+					},
+					[SUICoverdeckOverrides] = {
+						menu_text = _("Module: Coverdeck fonts"),
+					},
+					[SUIReadingStatsOverrides] = {
+						menu_text = _("Module: Reading Stats fonts"),
+					},
+					[SUIQuoteOverrides] = {
+						menu_text = _("Module: Quote Module fonts"),
+					},
+					[SUIClockOverrides] = {
+						menu_text = _("Module: Clock Module fonts"),
+					},
+				}, {menu_text = _("Simple UI fonts"),
+					reset_item_text = _("Reset all Simple UI font overrides"),}),
 			}
 		end,
 	}
 
-	if not hasMenuItem(order.setting, "custom_fonts") then
-		table.insert(order.setting, "custom_fonts")
+	if not hasMenuItem(order.setting, "ultimate_fonts") then
+		table.insert(order.setting, "ultimate_fonts")
 	end
 end
 
 local original_FileManagerMenu_setUpdateItemTable = FileManagerMenu.setUpdateItemTable
+---@diagnostic disable-next-line: duplicate-set-field
 function FileManagerMenu:setUpdateItemTable()
 	patchSettingsMenu(self, require("ui/elements/filemanager_menu_order"))
 	original_FileManagerMenu_setUpdateItemTable(self)
 end
 
 local original_ReaderMenu_setUpdateItemTable = ReaderMenu.setUpdateItemTable
+---@diagnostic disable-next-line: duplicate-set-field
 function ReaderMenu:setUpdateItemTable()
 	patchSettingsMenu(self, require("ui/elements/reader_menu_order"))
 	original_ReaderMenu_setUpdateItemTable(self)
 end
 
-logger.info("Custom UI fonts patch applied")
+logger.info("Ultimate Fonts patch applied")
