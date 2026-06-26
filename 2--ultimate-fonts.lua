@@ -157,6 +157,8 @@ end
 
 local function rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
 	if not widget then return end
+	if widget._font_patch_applied then return end
+
 	local cur_face = widget.face
 	local resolved
 	if override_class and option then
@@ -190,6 +192,14 @@ end
 local function rebuildTextWidget(widget, override_class, option, font_size, want_bold, want_italic)
 	rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
 	widget:updateSize()
+end
+
+local function rebuildMakeColoredTextWidget(widget, override_class, option, font_size, want_bold, want_italic)
+	if widget._inner then
+		rebuildTextWidget(widget._inner, override_class, option, font_size, want_bold, want_italic)
+		widget._inner:updateSize()
+		widget.dimen = widget._inner:getSize()
+	end
 end
 
 
@@ -1477,12 +1487,12 @@ local SUI_READING_STATS_FONT_OPTIONS = {
 local SUI_STAT_WINDOW_FONT_OPTIONS = {
 	title_font = {
 		setting_suffix = "title_font",
-		label = _("Stats Title"),
+		label = _("Book Title"),
 		default_face_name = "cfont",
 	},
 	author_font = {
 		setting_suffix = "author_font",
-		label = _("Stats Author"),
+		label = _("Book Author"),
 		default_face_name = "cfont",
 	},
 	label_font = {
@@ -1492,7 +1502,7 @@ local SUI_STAT_WINDOW_FONT_OPTIONS = {
 	},
 	value_font = {
 		setting_suffix = "value_font",
-		label = _("Stats Value"),
+		label = _("Stats Value (Number)"),
 		default_face_name = "cfont",
 	},
 	section_label_font = {
@@ -1505,20 +1515,71 @@ local SUI_STAT_WINDOW_FONT_OPTIONS = {
 		label = _("Stats Year Header"),
 		default_face_name = "cfont",
 	},
-	date_font = {
-		setting_suffix = "date_font",
-		label = _("Stats Date"),
+	stat_sub_label = {
+		setting_suffix = "stat_sub_label",
+		label = _("Stats Sub-Label"),
 		default_face_name = "cfont",
 	},
+}
+
+local SUI_QUOTE_FONT_OPTIONS = {
+	quote_font = {
+		setting_suffix = "quote_font",
+		label = _("Quote Text"),
+		default_face_name = "cfont",
+	},
+	attribution_font = {
+		setting_suffix = "attribution_font",
+		label = _("Quote Attribution"),
+		default_face_name = "cfont",
+	},
+}
+
+local SUI_CLOCK_FONT_OPTIONS = {
+	clock_font = {
+		setting_suffix = "clock_font",
+		label = _("Clock (Numbers)"),
+		default_face_name = "cfont",
+	},
+	word_font = {
+		setting_suffix = "word_font",
+		label = _("Clock (Words)"),
+		default_face_name = "cfont",
+	},
+	date_font = {
+		setting_suffix = "date_font",
+		label = _("Date Text"),
+		default_face_name = "cfont",
+	},
+	batt_font = {
+		setting_suffix = "batt_font",
+		label = _("Battery Text"),
+		default_face_name = "cfont",
+	},
+}
+
+
+
+local SUI_CLOCK_FONT_OPTION_LIST = {
+	SUI_CLOCK_FONT_OPTIONS.clock_font,
+	SUI_CLOCK_FONT_OPTIONS.word_font,
+	SUI_CLOCK_FONT_OPTIONS.date_font,
+	SUI_CLOCK_FONT_OPTIONS.batt_font,
+}
+
+local SUI_QUOTE_FONT_OPTION_LIST = {
+	SUI_QUOTE_FONT_OPTIONS.quote_font,
+	SUI_QUOTE_FONT_OPTIONS.attribution_font,
 }
 
 local SUI_STAT_WINDOW_FONT_OPTION_LIST = {
 	SUI_STAT_WINDOW_FONT_OPTIONS.title_font,
 	SUI_STAT_WINDOW_FONT_OPTIONS.author_font,
-	SUI_STAT_WINDOW_FONT_OPTIONS.label_font,
 	SUI_STAT_WINDOW_FONT_OPTIONS.value_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.label_font,
 	SUI_STAT_WINDOW_FONT_OPTIONS.section_label_font,
 	SUI_STAT_WINDOW_FONT_OPTIONS.year_header_font,
+	SUI_STAT_WINDOW_FONT_OPTIONS.stat_sub_label,
 }
 
 local SUI_COVERDECK_FONT_OPTION_LIST = {
@@ -1535,6 +1596,22 @@ local SUI_READING_STATS_FONT_OPTION_LIST = {
 	SUI_READING_STATS_FONT_OPTIONS.stats_value_font,
 	SUI_READING_STATS_FONT_OPTIONS.stats_label_font,
 	SUI_READING_STATS_FONT_OPTIONS.stats_placeholder_font,
+}
+
+local SUIClockOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_clock",
+	FONT_PATH_SETTING = "simpleui_clock_font_path",
+	FONT_NAME_SETTING = "simpleui_clock_font_name",
+	FONT_OPTIONS = SUI_CLOCK_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_CLOCK_FONT_OPTION_LIST,
+}
+
+local SUIQuoteOverrides = FontOverride:new{
+	SETTINGS_KEY = "simpleui_quote",
+	FONT_PATH_SETTING = "simpleui_quote_font_path",
+	FONT_NAME_SETTING = "simpleui_quote_font_name",
+	FONT_OPTIONS = SUI_QUOTE_FONT_OPTIONS,
+	FONT_OPTION_LIST = SUI_QUOTE_FONT_OPTION_LIST,
 }
 
 local SUICoverdeckOverrides = FontOverride:new{
@@ -1572,32 +1649,287 @@ local SUIStatWindowOverrides = FontOverride:new{
 local function patchSimpleUI(plugin)
 	local SUIStyle = require("sui_style")
 
-	SUIStyle.FONT_OVERRIDES.coverdeck.title = SUICoverdeckOverrides:getFontPath(SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_title_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.coverdeck.stats = SUICoverdeckOverrides:getFontPath(SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_stats_font.setting_suffix)
+	local SUICoverdeck = require("desktop_modules/module_coverdeck")
 
-	SUIStyle.FONT_OVERRIDES.reading_stats.value = SUIReadingStatsOverrides:getFontPath(SUIReadingStatsOverrides.FONT_OPTIONS.stats_value_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.reading_stats.label = SUIReadingStatsOverrides:getFontPath(SUIReadingStatsOverrides.FONT_OPTIONS.stats_label_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.reading_stats.placeholder = SUIReadingStatsOverrides:getFontPath(SUIReadingStatsOverrides.FONT_OPTIONS.stats_placeholder_font.setting_suffix)
+	local original_coverdeck_build = SUICoverdeck.build
 
-	SUIStyle.FONT_OVERRIDES.foldercover.title = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_title_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.foldercover.author = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_authors_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.foldercover.badge = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_badge_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.foldercover.folder_label = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.folder_title_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.foldercover.folder_title = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.folder_title_font.setting_suffix)
+	SUICoverdeck.build = function(self, w, ctx)
+		local UI = require("sui_core")
 
-	SUIStyle.FONT_OVERRIDES.bottombar.navbar = SUIBottombarOverrides:getFontPath(SUIBottombarOverrides.FONT_OPTIONS.bottom_nav_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.bottombar.pagebar = SUIBottombarOverrides:getFontPath(SUIBottombarOverrides.FONT_OPTIONS.bottom_pagination_font.setting_suffix)
+		local original_UI_makeColoredText = UI.makeColoredText
 
-	SUIStyle.FONT_OVERRIDES.stat_windows.stat_title = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.title_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.stat_windows.title = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.title_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.stat_windows.stat_author = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.author_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.stat_windows.author = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.author_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.stat_windows.cell_lbl = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.label_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.stat_windows.lbl = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.label_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.stat_windows.cell_val = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.value_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.stat_windows.val = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.value_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.stat_windows.section_label = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.section_label_font.setting_suffix)
-	SUIStyle.FONT_OVERRIDES.stat_windows.year_header = SUIStatWindowOverrides:getFontPath(SUIStatWindowOverrides.FONT_OPTIONS.year_header_font.setting_suffix)
+		local widgets = {}
+
+		UI.makeColoredText = function(opts)	
+			local widget = original_UI_makeColoredText(opts)
+			if widget._inner and widget._inner.face and widget._inner.face.realname == SUIStyle.FACE_ICONS then
+	 			return widget
+			end
+			table.insert(widgets, #widgets + 1, widget)
+			--logger:info("SUICoverdeck.build.makeColoredText called with widget:", widget)
+			return widget
+		end
+
+		local result = original_coverdeck_build(self, w, ctx)
+
+		UI.makeColoredText = original_UI_makeColoredText
+
+		for _, widget in ipairs(widgets) do
+			if widget._inner and widget._inner.bold == true then
+				rebuildMakeColoredTextWidget(widget, SUICoverdeckOverrides, SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_title_font)
+			elseif widget._inner and widget._inner.bold == false then
+				rebuildMakeColoredTextWidget(widget, SUICoverdeckOverrides, SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_stats_font)
+			end
+		end
+
+		return result
+	end
+
+	local SUIReadingStats = require("desktop_modules/module_reading_stats")
+
+	local original_SUIReadingStats_build = SUIReadingStats.build
+
+	SUIReadingStats.build = function(self, w, ctx)
+		local Config = require("sui_config")
+
+		local scale     = Config.getModuleScale("reading_stats", ctx and ctx.pfx)
+		local text_scale = scale * (Config.getRSTextScalePct() / 100)
+		local _val_fs = math.max(8, math.floor(SUIStyle.FS_TITLE * text_scale))
+		local _lbl_fs = math.max(6, math.floor(SUIStyle.FS_DETAIL * text_scale))
+		local _ph_fs  = math.max(8, math.floor(SUIStyle.FS_BODY  * scale))
+
+		local UI = require("sui_core")
+
+		local original_UI_makeColoredText = UI.makeColoredText
+
+		local widgets = {}
+
+		UI.makeColoredText = function(opts)	
+			local widget = original_UI_makeColoredText(opts)
+			if widget._inner and widget._inner.face and widget._inner.face.realname == SUIStyle.FACE_ICONS then
+	 			return widget
+			end
+			table.insert(widgets, #widgets + 1, widget)
+			return widget
+		end
+
+		local result = original_SUIReadingStats_build(self, w, ctx)
+
+		UI.makeColoredText = original_UI_makeColoredText
+
+		for _, widget in ipairs(widgets) do
+			local font_size = widget._inner and widget._inner.face and widget._inner.face.size or 18
+			if font_size == _val_fs then
+				rebuildMakeColoredTextWidget(widget, SUIReadingStatsOverrides, SUIReadingStatsOverrides.FONT_OPTIONS.stats_value_font)
+			elseif font_size == _lbl_fs then
+				rebuildMakeColoredTextWidget(widget, SUIReadingStatsOverrides, SUIReadingStatsOverrides.FONT_OPTIONS.stats_label_font)
+			elseif font_size == _ph_fs then
+				rebuildMakeColoredTextWidget(widget, SUIReadingStatsOverrides, SUIReadingStatsOverrides.FONT_OPTIONS.stats_placeholder_font)
+			end
+		end
+
+		return result
+	end
+
+	local SUIQuote = require("desktop_modules/module_quote")
+
+	local original_SUIQuote_build = SUIQuote.build
+
+	SUIQuote.build = function(w, ctx)
+		local Config = require("sui_config")
+
+		local scale      = Config.getModuleScale("quote", ctx.pfx)
+   		local quote_fs   = math.max(7, math.floor(SUIStyle.FS_BODY * scale))
+    	local attr_fs    = math.max(6, math.floor(SUIStyle.FS_DETAIL * scale))
+		
+
+		local TextBoxWidget = require("ui/widget/textboxwidget")
+
+		local original_TBW_new = TextBoxWidget.new
+
+		local widgets = {}
+
+		TextBoxWidget.new = function(klass, t, ...)
+			local widget = original_TBW_new(klass, t, ...)
+			if widget._inner and widget._inner.face and widget._inner.face.realname == SUIStyle.FACE_ICONS then
+	 			return widget
+			end
+			table.insert(widgets, #widgets + 1, widget)
+			return widget
+		end
+
+		local result = original_SUIQuote_build(w, ctx)
+
+		TextBoxWidget.new = original_TBW_new
+
+		for _, widget in ipairs(widgets) do
+			local font_size = widget.face and widget.face.size or 18
+			if font_size == quote_fs then
+				rebuildTextBoxWidget(widget, SUIQuoteOverrides, SUIQuoteOverrides.FONT_OPTIONS.quote_font)
+			elseif font_size == attr_fs then
+				rebuildTextBoxWidget(widget, SUIQuoteOverrides, SUIQuoteOverrides.FONT_OPTIONS.attribution_font)
+			end
+		end
+
+		return result
+	end
+
+	local SUIClock = require("desktop_modules/module_clock")
+
+	local original_SUIClock_build = SUIClock.build
+
+	SUIClock.build = function(self, w, ctx)
+		local Config = require("sui_config")
+
+		local scale     = Config.getModuleScale("clock", ctx and ctx.pfx)
+		local clock_fs      = math.max(10, math.floor(75  * scale))
+    	local word_fs       = math.max(10, math.floor(50   * scale))
+		local date_fs       = math.max(8,  math.floor(SUIStyle.FS_SUBTITLE   * scale))
+    	local batt_fs       = math.max(7,  math.floor(SUIStyle.FS_BODY   * scale))
+
+		local UI = require("sui_core")
+
+		local original_UI_makeColoredText = UI.makeColoredText
+
+		local widgets = {}
+
+		UI.makeColoredText = function(opts)	
+			local widget = original_UI_makeColoredText(opts)
+			if widget._inner and widget._inner.face and widget._inner.face.realname == SUIStyle.FACE_ICONS then
+	 			return widget
+			end
+			table.insert(widgets, #widgets + 1, widget)
+			return widget
+		end
+
+		local result = original_SUIClock_build(self, w, ctx)
+
+		UI.makeColoredText = original_UI_makeColoredText
+
+		for _, widget in ipairs(widgets) do
+			local font_size = widget._inner and widget._inner.face and widget._inner.face.size or 18
+			if font_size == clock_fs then
+				rebuildMakeColoredTextWidget(widget, SUIClockOverrides, SUIClockOverrides.FONT_OPTIONS.clock_font)
+			elseif font_size == word_fs then
+				rebuildMakeColoredTextWidget(widget, SUIClockOverrides, SUIClockOverrides.FONT_OPTIONS.word_font)
+			elseif font_size == date_fs then
+				rebuildMakeColoredTextWidget(widget, SUIClockOverrides, SUIClockOverrides.FONT_OPTIONS.date_font)
+			elseif font_size == batt_fs then
+				rebuildMakeColoredTextWidget(widget, SUIClockOverrides, SUIClockOverrides.FONT_OPTIONS.batt_font)
+			end
+		end
+
+		return result
+	end
+
+	local SUIStatsWindows = require("sui_stats_windows")
+
+	local original_showbookstatsfromfile = SUIStatsWindows.showBookStatsFromFile
+	local original_showreadinginsightswindow = SUIStatsWindows.showReadingInsightsWindow
+
+	SUIStatsWindows.showBookStatsFromFile = function(self, ...)
+		local TextWidget = require("ui/widget/textwidget")
+
+		local captured_widgets = {}
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+            local widget = orig_TW_new(klass, t, ...)
+
+			if widget and widget.face and widget.face.realname == SUIStyle.FACE_ICONS then return widget end
+			if widget._font_patch_applied then return widget end
+
+            table.insert(captured_widgets, #captured_widgets + 1, widget)
+			return widget
+        end
+
+		-- Run the original _initChips with the patched TextWidget.new to capture references to the
+		-- chip label widgets for later font updates.
+        original_showbookstatsfromfile(self, ...)
+		
+		TextWidget.new = orig_TW_new
+
+		if captured_widgets then
+			for _, widget in ipairs(captured_widgets) do
+				--logger:info("Rebuilding TextWidget with font override for stats window:", widget)
+				if widget.face and widget.face.size == SUIStyle.FS_TITLE then
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.value_font)
+				elseif widget.face and widget.face.size == SUIStyle.FS_DETAIL then
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.label_font)
+				elseif widget.face and widget.face.size == SUIStyle.FS_SUBTITLE and widget.bold then
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.title_font)
+				elseif widget.face and widget.face.size == SUIStyle.FS_BODY and not widget.bold then
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.author_font)
+				end
+			end
+        end
+	end
+
+	SUIStatsWindows.showReadingInsightsWindow = function(self, ...)
+		local TextWidget = require("ui/widget/textwidget")
+
+		local captured_widgets = {}
+
+		local orig_TW_new = TextWidget.new
+
+		TextWidget.new = function(klass, t, ...)
+            local widget = orig_TW_new(klass, t, ...)
+
+			if widget and widget.face and widget.face.realname == SUIStyle.FACE_ICONS then return widget end
+			if widget._font_patch_applied then return widget end
+
+            table.insert(captured_widgets, #captured_widgets + 1, widget)
+			return widget
+        end
+
+		-- Run the original _initChips with the patched TextWidget.new to capture references to the
+		-- chip label widgets for later font updates.
+        original_showreadinginsightswindow(self, ...)
+		
+		TextWidget.new = orig_TW_new
+
+		if captured_widgets then
+			for _, widget in ipairs(captured_widgets) do
+				
+				-- section label
+				if widget.face and widget.face.size == SUIStyle.FS_DETAIL and widget.bold then
+					logger:info("Rebuilding section label font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.section_label_font)
+					goto continue
+				-- today summary value
+				elseif widget.face and widget.face.size == math.floor(SUIStyle.FS_TITLE * 1.6) and widget.bold then
+					logger:info("Rebuilding stat value font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.value_font)
+					goto continue
+				-- today summary label
+				elseif widget.face and widget.face.size == SUIStyle.FS_DETAIL and not widget.bold then
+					logger:info("Rebuilding stat label font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.label_font)
+					goto continue
+				-- streak caption/sub-label
+				elseif widget.face and widget.face.size == SUIStyle.FS_CAPTION and not widget.bold then
+					logger:info("Rebuilding stat sub-label font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.stat_sub_label)
+					goto continue
+				-- stat row label
+				elseif widget.face and widget.face.size == SUIStyle.FS_BODY and not widget.bold then
+					logger:info("Rebuilding stat row label font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.label_font)
+					goto continue
+				-- stat row value
+				elseif widget.face and widget.face.size == SUIStyle.FS_BODY and widget.bold then
+					logger:info("Rebuilding stat row value font:", widget)
+					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.value_font)
+					goto continue
+				end
+				
+				logger:info("UNMODIFIED WIDGET:", widget)
+				::continue::
+			end
+        end
+		
+	end
 end
 
 userpatch.registerPatchPluginFunc("simpleui", patchSimpleUI)
@@ -2025,10 +2357,16 @@ local function patchSettingsMenu(menu, order)
 						menu_text = _("Stats Window fonts"),
 					},
 					[SUICoverdeckOverrides] = {
-						menu_text = _("Coverdeck fonts"),
+						menu_text = _("Module: Coverdeck fonts"),
 					},
 					[SUIReadingStatsOverrides] = {
-						menu_text = _("Reading Stats fonts"),
+						menu_text = _("Module: Reading Stats fonts"),
+					},
+					[SUIQuoteOverrides] = {
+						menu_text = _("Module: Quote Module fonts"),
+					},
+					[SUIClockOverrides] = {
+						menu_text = _("Module: Clock Module fonts"),
 					},
 				}, {menu_text = _("Simple UI fonts"),
 					reset_item_text = _("Reset all Simple UI font overrides"),}),
