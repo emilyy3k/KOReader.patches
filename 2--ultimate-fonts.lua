@@ -1666,7 +1666,6 @@ local function patchSimpleUI(plugin)
 	 			return widget
 			end
 			table.insert(widgets, #widgets + 1, widget)
-			--logger:info("SUICoverdeck.build.makeColoredText called with widget:", widget)
 			return widget
 		end
 
@@ -1852,7 +1851,6 @@ local function patchSimpleUI(plugin)
 
 		if captured_widgets then
 			for _, widget in ipairs(captured_widgets) do
-				--logger:info("Rebuilding TextWidget with font override for stats window:", widget)
 				if widget.face and widget.face.size == SUIStyle.FS_TITLE then
 					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.value_font)
 				elseif widget.face and widget.face.size == SUIStyle.FS_DETAIL then
@@ -1894,38 +1892,23 @@ local function patchSimpleUI(plugin)
 				
 				-- section label
 				if widget.face and widget.face.size == SUIStyle.FS_DETAIL and widget.bold then
-					logger:info("Rebuilding section label font:", widget)
 					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.section_label_font)
-					goto continue
 				-- today summary value
 				elseif widget.face and widget.face.size == math.floor(SUIStyle.FS_TITLE * 1.6) and widget.bold then
-					logger:info("Rebuilding stat value font:", widget)
 					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.value_font)
-					goto continue
 				-- today summary label
 				elseif widget.face and widget.face.size == SUIStyle.FS_DETAIL and not widget.bold then
-					logger:info("Rebuilding stat label font:", widget)
 					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.label_font)
-					goto continue
 				-- streak caption/sub-label
 				elseif widget.face and widget.face.size == SUIStyle.FS_CAPTION and not widget.bold then
-					logger:info("Rebuilding stat sub-label font:", widget)
 					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.stat_sub_label)
-					goto continue
 				-- stat row label
 				elseif widget.face and widget.face.size == SUIStyle.FS_BODY and not widget.bold then
-					logger:info("Rebuilding stat row label font:", widget)
 					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.label_font)
-					goto continue
 				-- stat row value
 				elseif widget.face and widget.face.size == SUIStyle.FS_BODY and widget.bold then
-					logger:info("Rebuilding stat row value font:", widget)
 					rebuildTextWidget(widget, SUIStatWindowOverrides, SUIStatWindowOverrides.FONT_OPTIONS.value_font)
-					goto continue
 				end
-				
-				logger:info("UNMODIFIED WIDGET:", widget)
-				::continue::
 			end
         end
 		
@@ -2393,4 +2376,4 @@ function ReaderMenu:setUpdateItemTable()
 	original_ReaderMenu_setUpdateItemTable(self)
 end
 
-logger.info("Ultimate Fonts patch applied")
+logger.info("[Ultimate Fonts]: Ultimate Fonts patch applied")
