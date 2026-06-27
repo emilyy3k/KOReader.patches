@@ -975,6 +975,87 @@ function InputTextWidget:init(...)
 end
 
 --------------------------------------------------------------------------------
+-- ConfigDialog font logic
+--------------------------------------------------------------------------------
+local CONFIGDIALOG_FONT_KEY = "configdialog"
+local CONFIGDIALOG_FONT_PATH_SETTING = "configdialog_font_path"
+local CONFIGDIALOG_FONT_NAME_SETTING = "configdialog_font_name"
+
+local CONFIGDIALOG_FONT_OPTIONS = {
+	config_name_face = {
+		setting_suffix = "config_name_face",
+		label = _("Config Dialog Name"),
+		default_face_name = "ffont",
+	},
+	config_option_face = {
+		setting_suffix = "config_option_face",
+		label = _("Config Dialog Option"),
+		default_face_name = "cfont",
+	},
+}
+
+local CONFIGDIALOG_FONT_OPTION_LIST = {
+	CONFIGDIALOG_FONT_OPTIONS.config_name_face,
+	CONFIGDIALOG_FONT_OPTIONS.config_option_face,
+}
+
+local ConfigDialogOverrides = FontOverride:new{
+	SETTINGS_KEY = CONFIGDIALOG_FONT_KEY,
+	FONT_PATH_SETTING = CONFIGDIALOG_FONT_PATH_SETTING,
+	FONT_NAME_SETTING = CONFIGDIALOG_FONT_NAME_SETTING,
+	FONT_OPTIONS = CONFIGDIALOG_FONT_OPTIONS,
+	FONT_OPTION_LIST = CONFIGDIALOG_FONT_OPTION_LIST,
+}
+
+
+local ConfigDialog = require("ui/widget/configdialog")
+
+local original_ConfigDialog_update = ConfigDialog.update
+
+ConfigDialog.update = function(self, ...)
+	local TextWidget = require("ui/widget/textwidget")
+
+
+	local widgets = {}
+
+	local orig_TW_new = TextWidget.new
+
+	TextWidget.new = function(self, opts, ...)
+		local widget = orig_TW_new(self, opts, ...)
+		if opts.text and opts.text == "" then
+			return widget
+		end
+
+		table.insert(widgets, #widgets + 1, widget)
+		return widget
+	end
+
+	original_ConfigDialog_update(self, ...)
+	
+	TextWidget.new = orig_TW_new
+
+	for _, widget in ipairs(widgets) do
+		local widget_font_size = widget.face and widget.face.orig_size or 16
+		local widget_original_face = widget.face and widget.face.orig_font or "cfont"
+
+		local name_font_size = 20
+		local name_original_face = "ffont"
+		local item_font_size = 16
+		local item_original_face = "cfont"
+
+		local new_face = nil
+		if widget_font_size == name_font_size and widget_original_face == name_original_face then
+			new_face = ConfigDialogOverrides.FONT_OPTIONS.config_name_face
+		elseif widget_font_size == item_font_size and widget_original_face == item_original_face then
+			new_face = ConfigDialogOverrides.FONT_OPTIONS.config_option_face
+		end
+
+		rebuildTextWidget(widget, ConfigDialogOverrides, new_face)
+	end
+		
+end
+
+--------------------------------------------------------------------------------
 -- titlebar font logic
 --------------------------------------------------------------------------------
 local TitlebarWidget = require("ui/widget/titlebar")
@@ -2326,12 +2407,14 @@ local function patchSettingsMenu(menu, order)
 					menu_text = _("Dictionary fonts")}),
 				getFontMenuSubsection(InfoMessageOverrides, {
 					menu_text = _("Info Message & Confirm Box fonts")}),
+				getFontMenuSubsection(ConfigDialogOverrides, {
+					menu_text = _("Config Dialog fonts (Reader Settings, etc.)")}),
 				getFontMenuSubsection(ButtonOverrides, {
 					menu_text = _("Button fonts")}),
 				getFontMenuSubsection(CoverBrowserOverrides, {
 					menu_text = _("Cover Browser fonts")}),
 				getFontMenuSubsection(BookshelfOverrides, {
-					menu_text = _("Bookshelf fonts")}),
+					menu_text = _("Plugin: Bookshelf fonts")}),
 				getFontMenuSection({
 					[SUIBottombarOverrides] = {
 						menu_text = _("Bottom Bar fonts"),
@@ -2351,7 +2434,7 @@ local function patchSettingsMenu(menu, order)
 					[SUIClockOverrides] = {
 						menu_text = _("Module: Clock Module fonts"),
 					},
-				}, {menu_text = _("Simple UI fonts"),
+				}, {menu_text = _("Plugin: Simple UI fonts"),
 					reset_item_text = _("Reset all Simple UI font overrides"),}),
 			}
 		end,
