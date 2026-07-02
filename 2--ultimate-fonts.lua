@@ -1,6 +1,7 @@
 ---@diagnostic disable: duplicate-set-field
+---version: 1.0
 local logger = require("logger")
-logger.info("[Ultimate Fonts]: Applying fonts patch")
+logger.info("[Ultimate Fonts]: Applying UI fonts patch")
 
 local ReaderFont = require("apps/reader/modules/readerfont")
 local Font = require("ui/font")
@@ -39,7 +40,7 @@ local function returnToParentMenu(touchmenu_instance)
 	end
 end
 
-local function deferUIFontAction(action, after_action)
+local function deferUIAction(action, after_action)
 	UIManager:scheduleIn(0.1, function()
 		action()
 		if after_action then
@@ -49,7 +50,7 @@ local function deferUIFontAction(action, after_action)
 end
 
 local function deferUIFontChange(action)
-	deferUIFontAction(action, function()
+	deferUIAction(action, function()
 		showUIFontRestartPrompt()
 	end)
 end
@@ -101,7 +102,7 @@ local function getGenericFontTable(reader_font_instance, options)
 						options.on_select_func(touchmenu_instance, font_filename, font_name)
 					elseif options.restart_on_change then
 						if options.return_to_parent_on_change or options.close_to_parent_on_change then
-							deferUIFontAction(saveSelection, function()
+							deferUIAction(saveSelection, function()
 								returnToParentMenu(touchmenu_instance)
 								showUIFontRestartPrompt()
 							end)
@@ -111,7 +112,7 @@ local function getGenericFontTable(reader_font_instance, options)
 						end
 					else
 						if options.return_to_parent_on_change then
-							deferUIFontAction(function()
+							deferUIAction(function()
 								saveSelection()
 								UIManager:setDirty(nil, "ui")
 							end, function()
@@ -138,6 +139,11 @@ local function getScopedFontSettingKeys(prefix, suffix)
 	return {
 		path = prefix .. "_" .. suffix .. "_path",
 		name = prefix .. "_" .. suffix .. "_name",
+		bold = prefix .. "_" .. suffix .. "_bold",
+		caps = prefix .. "_" .. suffix .. "_caps",
+		replace_with = prefix .. "_" .. suffix .. "_replace_with",
+		fontpct = prefix .. "_" .. suffix .. "_fontpct",
+		fontmod = prefix .. "_" .. suffix .. "_fontmod",
 	}
 end
 
@@ -155,48 +161,101 @@ local function saveFontOverride(setting_keys, font_path, font_name)
 	end
 end
 
-local function rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
+local function rebuildWidget(widget, override_class, option, font_size)
 	if not widget then return end
 	if widget._font_patch_applied then return end
+	if option == nil then return end
+	local updated = false
 
 	local cur_face = widget.face
 	local resolved
 	if override_class and option then
 		if option and option.setting_suffix then
 			resolved = override_class:getFontPath(option.setting_suffix)
+			updated = true
 		elseif type(option) == "string" then
 			-- Backward-compatible: accept a setting suffix or a fully resolved font path.
 			resolved = override_class:getFontPath(option) or option
+			updated = true
 		end
 	else
 		resolved = cur_face and cur_face.ftname
 	end
+
+	local pct_setting = override_class:getForcedFontSizePercentSetting(option.setting_suffix)
+	local mod_setting = override_class:getFontSizeModSetting(option.setting_suffix)
+
 	local new_size = font_size or (cur_face and cur_face.orig_size) or 18
-	if resolved == (cur_face and cur_face.ftname)
-		and new_size == (cur_face and cur_face.orig_size) then return end
-	local new_face = resolved and Font:getFace(resolved, new_size)
-	if not new_face or new_face == cur_face then return end
-	if widget.bold then
-		widget.bold = true
+	if pct_setting then
+		new_size = new_size * (pct_setting / 100)
 	end
+
+	if mod_setting then
+		new_size = new_size + mod_setting
+	end
+
+	
+	local new_face = resolved and Font:getFace(resolved, new_size)
+
+	if new_face == cur_face then updated = false end
+
+	local bold_setting = override_class:getForcedBoldSetting(option.setting_suffix)
+	if bold_setting == "bold" then
+		widget.bold = true
+		updated = true
+	elseif bold_setting == "unbold" then
+		updated = true
+		widget.bold = false
+	end
+
+	local caps_setting = override_class:getForcedCapsSetting(option.setting_suffix)
+
+	if caps_setting == "uppercase" then
+		widget.text = string.upper(widget.text)
+		updated = true
+	elseif caps_setting == "lowercase" then
+		widget.text = string.lower(widget.text)
+		updated = true
+	elseif caps_setting == "titlecase" then
+		widget.text = string.gsub(widget.text, "(%1)(%w)", function(first, rest)
+			return string.upper(first) .. string.lower(rest)
+		end)
+		updated = true
+	end
+
+	local replace_setting = override_class:getForcedReplaceSetting(option.setting_suffix)
+
+	if replace_setting ~= nil then
+		local replace_char = replace_setting
+		widget.text = string.gsub(widget.text, " ", replace_char)
+		updated = true
+	end
+
+	-- guard against updating without any changes
+	if not updated then return end
+
 	widget.face = new_face
 	widget:free(true)
 	widget._font_patch_applied = true
 end
 
-local function rebuildTextBoxWidget(widget, override_class, option, font_size, want_bold, want_italic)
-	rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
+local function rebuildTextBoxWidget(widget, override_class, option, font_size)
+	rebuildWidget(widget, override_class, option, font_size)
 	widget:init()
 end
 
-local function rebuildTextWidget(widget, override_class, option, font_size, want_bold, want_italic)
-	rebuildWidget(widget, override_class, option, font_size, want_bold, want_italic)
+local function rebuildScrollTextBoxWidget(widget, override_class, option, font_size)
+	rebuildTextBoxWidget(widget, override_class, option, font_size)
+end
+
+local function rebuildTextWidget(widget, override_class, option, font_size)
+	rebuildWidget(widget, override_class, option, font_size)
 	widget:updateSize()
 end
 
-local function rebuildMakeColoredTextWidget(widget, override_class, option, font_size, want_bold, want_italic)
+local function rebuildMakeColoredTextWidget(widget, override_class, option, font_size)
 	if widget._inner then
-		rebuildTextWidget(widget._inner, override_class, option, font_size, want_bold, want_italic)
+		rebuildTextWidget(widget._inner, override_class, option, font_size)
 		widget._inner:updateSize()
 		widget.dimen = widget._inner:getSize()
 	end
@@ -434,6 +493,7 @@ local FontOverride = {
 			setting_suffix = "",
 			label = _(""),
 			default_face_name = "",
+			disable_mods = false,
 		},
 	},
 }
@@ -445,6 +505,7 @@ function FontOverride:new (o)
 	return o
 end
 
+---@param option_key string
 function FontOverride:getFontOption(option_key)
 	if not option_key then
 		return nil
@@ -466,34 +527,41 @@ function FontOverride:getFontOption(option_key)
 	return nil
 end
 
+---@param option_key string
 function FontOverride:getFontSettingKeys(option_key)
 	local option = self:getFontOption(option_key)
 	local setting_suffix = option and option.setting_suffix or option_key
 	return getScopedFontSettingKeys(self.SETTINGS_KEY, setting_suffix)
 end
 
+---@return string|nil
 function FontOverride:getFontOverridePath()
 	return G_reader_settings:readSetting(self.FONT_PATH_SETTING)
 end
 
+---@return boolean
 function FontOverride:hasFontOverride()
 	return self:getFontOverridePath() ~= nil
 end
 
+---@return string|nil
 function FontOverride:getFontBasePath()
 	return self:getFontOverridePath() or getRegularFontPath(Font.fontmap.smallinfofont)
 end
 
+---@param option_key string
 function FontOverride:getDefaultFontPath(option_key)
 	local option = self:getFontOption(option_key)
 	return option and getRegularFontPath(Font.fontmap[option.default_face_name]) or nil
 end
 
+---@param option_key string
 function FontOverride:hasFontSlotOverride(option_key)
 	local setting_keys = self:getFontSettingKeys(option_key)
 	return G_reader_settings:readSetting(setting_keys.path) ~= nil
 end
 
+---@param option_key string
 function FontOverride:getFontPath(option_key)
 	local setting_keys = self:getFontSettingKeys(option_key)
 	return G_reader_settings:readSetting(setting_keys.path)
@@ -501,14 +569,19 @@ function FontOverride:getFontPath(option_key)
 		or self:getDefaultFontPath(option_key)
 end
 
+---@param option_key string
+---@param font_path string|nil
+---@param font_name string|nil
 function FontOverride:saveFontSlotOverride(option_key, font_path, font_name)
 	saveFontOverride(self:getFontSettingKeys(option_key), font_path, font_name)
 end
 
+---@param option_key string
 function FontOverride:clearFontSlotOverride(option_key)
 	self:saveFontSlotOverride(option_key, nil, nil)
 end
 
+---@param option_keys string[]
 function FontOverride:clearFontSlotOverrides(option_keys)
 	for _, option in ipairs(option_keys) do
 		self:clearFontSlotOverride(option)
@@ -539,6 +612,7 @@ function FontOverride:getOptionList()
 	return options
 end
 
+---@param option_key string
 function FontOverride:getInheritedFontPath(option_key)
 	if self:hasFontOverride() then
 		return self:getFontBasePath(), G_reader_settings:readSetting(self.FONT_NAME_SETTING), true
@@ -546,6 +620,7 @@ function FontOverride:getInheritedFontPath(option_key)
 	return self:getDefaultFontPath(option_key), nil, false
 end
 
+---@param option_key string
 function FontOverride:getFontDisplay(option_key)
 	local setting_keys = self:getFontSettingKeys(option_key)
 	local has_override = self:hasFontSlotOverride(option_key)
@@ -557,6 +632,114 @@ function FontOverride:getFontDisplay(option_key)
 	return getUIFontNameDisplay(inherited_path, inherited_name, true)
 end
 
+---@param option_key string
+---@param bold string
+function FontOverride:saveBoldOverride(option_key, bold)
+	if bold ~= nil and bold ~= "bold" and bold ~= "unbold" then
+		logger.warn("[Ultimate Fonts]: Invalid bold value for option", option_key, ", ", tostring(bold))
+		return
+	end
+	
+	local setting_keys = self:getFontSettingKeys(option_key)
+	if bold then 
+		G_reader_settings:saveSetting(setting_keys.bold, bold)
+	else
+		G_reader_settings:delSetting(setting_keys.bold)
+	end
+end
+
+---@param option_key string
+function FontOverride:getForcedBoldSetting(option_key)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	return G_reader_settings:readSetting(setting_keys.bold)
+end
+
+---@param option_key string
+---@param caps string
+function FontOverride:saveCapsOverride(option_key, caps)
+	if caps ~= nil and caps ~= "uppercase" and caps ~= "lowercase" and caps ~= "titlecase" then
+		logger.warn("[Ultimate Fonts]: Invalid caps value for option", option_key, ", ", tostring(caps))
+		return
+	end
+	
+	local setting_keys = self:getFontSettingKeys(option_key)
+	if caps then
+		G_reader_settings:saveSetting(setting_keys.caps, caps)
+	else
+		G_reader_settings:delSetting(setting_keys.caps)
+	end
+end
+
+---@param option_key string
+function FontOverride:getForcedCapsSetting(option_key)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	return G_reader_settings:readSetting(setting_keys.caps)
+end
+
+---@param option_key string
+---@param character string
+function FontOverride:saveReplaceOverride(option_key, character)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	if character then
+		G_reader_settings:saveSetting(setting_keys.replace_with, character)
+	else
+		G_reader_settings:delSetting(setting_keys.replace_with)
+	end
+end
+
+---@param option_key string
+function FontOverride:getForcedReplaceSetting(option_key)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	return G_reader_settings:readSetting(setting_keys.replace_with)
+end
+
+---@param option_key string
+---@param size_pct_num string
+function FontOverride:saveFontSizePercentOverride(option_key, size_pct_num)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	if size_pct_num then
+		G_reader_settings:saveSetting(setting_keys.fontpct, size_pct_num)
+	else
+		G_reader_settings:delSetting(setting_keys.fontpct)
+	end
+end
+
+---@param option_key string
+function FontOverride:getForcedFontSizePercentSetting(option_key)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	return G_reader_settings:readSetting(setting_keys.fontpct)
+end
+
+---@param option_key string
+---@param size_pt_num string
+function FontOverride:saveFontSizeModOverride(option_key, size_pt_num)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	if size_pt_num then
+		G_reader_settings:saveSetting(setting_keys.fontmod, size_pt_num)
+	else
+		G_reader_settings:delSetting(setting_keys.fontmod)
+	end
+end
+
+---@param option_key string
+function FontOverride:getFontSizeModSetting(option_key)
+	local setting_keys = self:getFontSettingKeys(option_key)
+	return G_reader_settings:readSetting(setting_keys.fontmod)
+end
+
+-- returns true if any of the font config/customisations override settings are present for the given option_key
+---@param option_key string
+function FontOverride:hasFontMod(option_key)
+	local size_mod = self:getFontSizeModSetting(option_key) ~= nil
+	local size_pct = self:getForcedFontSizePercentSetting(option_key) ~= nil
+	local replace = self:getForcedReplaceSetting(option_key) ~= nil
+	local caps = self:getForcedCapsSetting(option_key) ~= nil
+	local bold = self:getForcedBoldSetting(option_key) ~= nil
+	return size_mod or size_pct or replace or caps or bold
+end
+
+---@param option_key string
+---@param font_size number
 function FontOverride:getFace(option_key, font_size)
 	
 	local font_path = self:getFontPath(option_key)
@@ -570,6 +753,41 @@ function FontOverride:getFace(option_key, font_size)
 		return Font:getFace(font_path, font_size)
 	end
 	return default_face
+end
+
+---@param option_key string
+---@param short boolean
+function FontOverride:getFontModString(option_key, short)
+	local bold = self:getForcedBoldSetting(option_key)
+	local size_mod = self:getFontSizeModSetting(option_key)
+	local size_pct = self:getForcedFontSizePercentSetting(option_key) 
+	local caps = self:getForcedCapsSetting(option_key)
+	local replace = self:getForcedReplaceSetting(option_key)
+
+	local customisation_parts = {}
+
+	if bold == "bold" then
+		table.insert(customisation_parts, short and _("B") or _("Bold"))
+	elseif bold == "unbold" then
+		table.insert(customisation_parts, short and _("UB") or _("Unbold"))
+	end
+	if size_mod then
+		table.insert(customisation_parts, T("%1", size_mod))
+	end
+	if size_pct then
+		table.insert(customisation_parts, short and T("%1%%", size_pct-100) or T("%1%%", size_pct))
+	end
+	if caps == "uppercase" then
+		table.insert(customisation_parts, short and _("UC") or _("Uppercase"))
+	elseif caps == "lowercase" then
+		table.insert(customisation_parts, short and _("LC") or _("Lowercase"))
+	elseif caps == "titlecase" then
+		table.insert(customisation_parts, short and _("TC") or _("Titlecase"))
+	end
+	if replace then
+		table.insert(customisation_parts, short and T("R%1", replace) or T("Replace w/ '%1'", replace))
+	end
+	return table.concat(customisation_parts, ", ")
 end
 
 --------------------------------------------------------------------------------
@@ -787,9 +1005,6 @@ end
 --------------------------------------------------------------------------------
 -- InfoMessage font logic
 --------------------------------------------------------------------------------
-local InfoMessageWidget = require("ui/widget/infomessage")
-local ConfirmBoxWidget = require("ui/widget/confirmbox")
-
 local INFOMESSAGE_FONT_KEY = "infomessage"
 local INFOMESSAGE_FONT_PATH_SETTING = "infomessage_font_path"
 local INFOMESSAGE_FONT_NAME_SETTING = "infomessage_font_name"
@@ -826,23 +1041,59 @@ local InfoMessageOverrides = FontOverride:new{
 	FONT_OPTION_LIST = INFOMESSAGE_FONT_OPTIONS_LIST,
 }
 
+local InfoMessageWidget = require("ui/widget/infomessage")
+local ConfirmBoxWidget = require("ui/widget/confirmbox")
 
 local original_InfoMessageWidget_init = InfoMessageWidget.init
 ---@diagnostic disable-next-line: duplicate-set-field
 function InfoMessageWidget:init(...)
-	if self.monospace_font then
-		self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.text_face_monospace.setting_suffix)
-	else
-		self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.text_face.setting_suffix)
+	local TextBoxWidget = require("ui/widget/textboxwidget")
+	local ScrollTextWidget = require("ui/widget/scrolltextwidget")
+
+	local option = self.monospace_font and InfoMessageOverrides.FONT_OPTIONS.text_face_monospace or InfoMessageOverrides.FONT_OPTIONS.text_face
+
+	local orig_TBW_new = TextBoxWidget.new
+	local orig_STW_new = ScrollTextWidget.new
+	TextBoxWidget.new = function(klass, t, ...)
+		local widget = orig_TBW_new(klass, t, ...)
+		rebuildTextBoxWidget(widget, InfoMessageOverrides, option)
+		return widget
 	end
-	return original_InfoMessageWidget_init(self, ...)
+
+	ScrollTextWidget.new = function(klass, t, ...)
+		local widget = orig_STW_new(klass, t, ...)
+		rebuildScrollTextBoxWidget(widget, InfoMessageOverrides, option)
+		return widget
+	end
+
+	local result = original_InfoMessageWidget_init(self, ...)
+
+	TextBoxWidget.new = orig_TBW_new
+	ScrollTextWidget.new = orig_STW_new
+
+	return result
 end
 
 local original_ConfirmBoxWidget_init = ConfirmBoxWidget.init
 ---@diagnostic disable-next-line: duplicate-set-field
 function ConfirmBoxWidget:init(...)
-	self.face = InfoMessageOverrides:getFace(InfoMessageOverrides.FONT_OPTIONS.confirmbox_face.setting_suffix)
-	return original_ConfirmBoxWidget_init(self, ...)
+	local TextBoxWidget = require("ui/widget/textboxwidget")
+
+	local orig_TBW_new = TextBoxWidget.new
+
+	local option = InfoMessageOverrides.FONT_OPTIONS.confirmbox_face
+
+	TextBoxWidget.new = function(klass, t, ...)
+		local widget = orig_TBW_new(klass, t, ...)
+		rebuildTextBoxWidget(widget, InfoMessageOverrides, option)
+		return widget
+	end
+
+	local result = original_ConfirmBoxWidget_init(self, ...)
+
+	TextBoxWidget.new = orig_TBW_new
+
+	return result
 end
 
 --------------------------------------------------------------------------------
@@ -873,11 +1124,6 @@ local BUTTON_FONT_OPTIONS = {
 		label = _("Button Dialog Info Text"),
 		default_face_name = "infofont",
 	},
-	button_progress_face = {
-		setting_suffix = "button_progress_face",
-		label = _("Progress Button Text"),
-		default_face_name = "infofont",
-	},
 }
 
 local BUTTON_FONT_OPTION_LIST = {
@@ -885,7 +1131,6 @@ local BUTTON_FONT_OPTION_LIST = {
 	BUTTON_FONT_OPTIONS.menu_button_face,
 	BUTTON_FONT_OPTIONS.button_dialog_title_face,
 	BUTTON_FONT_OPTIONS.button_dialog_info_face,
-	BUTTON_FONT_OPTIONS.button_progress_face,
 }
 
 local ButtonOverrides = FontOverride:new{
@@ -900,29 +1145,72 @@ local ButtonWidget = require("ui/widget/button")
 local original_ButtonWidget_init = ButtonWidget.init
 ---@diagnostic disable-next-line: duplicate-set-field
 function ButtonWidget:init(...)
+	local TextWidget = require("ui/widget/textwidget")
+	local TextBoxWidget = require("ui/widget/textboxwidget")
+
+	local option = ButtonOverrides.FONT_OPTIONS.button_face
+
+	-- if menu style is set, use the menu button face instead of the regular button face
 	if self.menu_style then
-		self.text_font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.menu_button_face.setting_suffix)
-	else
-		self.text_font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.button_face.setting_suffix)
+		option = ButtonOverrides.FONT_OPTIONS.menu_button_face
 	end
-	return original_ButtonWidget_init(self, ...)
+
+	local orig_TW_new = TextWidget.new
+	local orig_TBW_new = TextBoxWidget.new
+
+	TextWidget.new = function(klass, t, ...)
+		local widget = orig_TW_new(klass, t, ...)
+		rebuildTextWidget(widget, ButtonOverrides, option)
+		return widget
+	end
+
+	TextBoxWidget.new = function(klass, t, ...)
+		local widget = orig_TBW_new(klass, t, ...)
+		rebuildTextBoxWidget(widget, ButtonOverrides, option)
+		return widget
+	end
+
+	local result = original_ButtonWidget_init(self, ...)
+
+	TextWidget.new = orig_TW_new
+	TextBoxWidget.new = orig_TBW_new
+
+	return result
 end
 
 local ButtonDialogWidget = require("ui/widget/buttondialog")
 local original_ButtonDialogWidget_init = ButtonDialogWidget.init
 ---@diagnostic disable-next-line: duplicate-set-field
 function ButtonDialogWidget:init(...)
-	self.title_face  = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_title_face.setting_suffix)
-	self.info_face = ButtonOverrides:getFace(ButtonOverrides.FONT_OPTIONS.button_dialog_info_face.setting_suffix)
-	return original_ButtonDialogWidget_init(self, ...)
-end
+	local TextBoxWidget = require("ui/widget/textboxwidget")
 
-local ButtonProgressWidget = require("ui/widget/buttonprogresswidget")
-local original_ButtonProgressWidget_init = ButtonProgressWidget.init
----@diagnostic disable-next-line: duplicate-set-field
-function ButtonProgressWidget:init(...)
-	self.font_face = ButtonOverrides:getFontPath(ButtonOverrides.FONT_OPTIONS.button_progress_face.setting_suffix)
-	return original_ButtonProgressWidget_init(self, ...)
+	local TBW_widgets = {}
+
+	local orig_TBW_new = TextBoxWidget.new
+
+	TextBoxWidget.new = function(klass, t, ...)
+		local widget = orig_TBW_new(klass, t, ...)
+		table.insert(TBW_widgets, #TBW_widgets+1, widget)
+		return widget
+	end
+
+	local result = original_ButtonDialogWidget_init(self, ...)
+
+	TextBoxWidget.new = orig_TBW_new
+
+	local title_face = ButtonOverrides.FONT_OPTIONS.button_dialog_title_face
+	local info_face = ButtonOverrides.FONT_OPTIONS.button_dialog_info_face
+
+	local option = self.use_info_style and info_face or title_face
+
+	if TBW_widgets then
+		for _, widget in ipairs(TBW_widgets) do
+			logger.info("[Ultimate Fonts]: Rebuilding ButtonDialogWidget TextBoxWidget with font option: ", option.setting_suffix)
+			rebuildTextBoxWidget(widget, ButtonOverrides, option)
+		end
+	end
+
+	return result
 end
 
 --------------------------------------------------------------------------------
@@ -984,12 +1272,12 @@ local CONFIGDIALOG_FONT_NAME_SETTING = "configdialog_font_name"
 local CONFIGDIALOG_FONT_OPTIONS = {
 	config_name_face = {
 		setting_suffix = "config_name_face",
-		label = _("Config Dialog Name"),
+		label = _("Option Name"),
 		default_face_name = "ffont",
 	},
 	config_option_face = {
 		setting_suffix = "config_option_face",
-		label = _("Config Dialog Option"),
+		label = _("Option Value"),
 		default_face_name = "cfont",
 	},
 }
@@ -1014,7 +1302,6 @@ local original_ConfigDialog_update = ConfigDialog.update
 
 ConfigDialog.update = function(self, ...)
 	local TextWidget = require("ui/widget/textwidget")
-
 
 	local widgets = {}
 
@@ -1073,7 +1360,7 @@ local TITLEBAR_FONT_OPTIONS = {
 	},
 	title_face_not_fullscreen = {
 		setting_suffix = "title_face_not_fullscreen",
-		label = _("Title (not fullscreen)"),
+		label = _("Title"),
 		default_face_name = "x_smalltfont",
 	},
 	subtitle_face = {
@@ -1088,11 +1375,19 @@ local TITLEBAR_FONT_OPTIONS = {
 	},
 }
 
+local TITLEBAR_FONT_OPTION_LIST = {
+	TITLEBAR_FONT_OPTIONS.title_face_not_fullscreen,
+	TITLEBAR_FONT_OPTIONS.title_face_fullscreen,
+	TITLEBAR_FONT_OPTIONS.subtitle_face,
+	TITLEBAR_FONT_OPTIONS.info_text_face,
+}
+
 local TitlebarOverrides = FontOverride:new{
 	SETTINGS_KEY = TITLEBAR_FONT_KEY,
 	FONT_PATH_SETTING = TITLEBAR_FONT_PATH_SETTING,
 	FONT_NAME_SETTING = TITLEBAR_FONT_NAME_SETTING,
 	FONT_OPTIONS = TITLEBAR_FONT_OPTIONS,
+	FONT_OPTION_LIST = TITLEBAR_FONT_OPTION_LIST,
 }
 
 
@@ -1102,7 +1397,59 @@ function TitlebarWidget:init(...)
 	self.title_face_not_fullscreen = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.title_face_not_fullscreen.setting_suffix)
 	self.subtitle_face = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.subtitle_face.setting_suffix)
 	self.info_text_face = TitlebarOverrides:getFace(TitlebarOverrides.FONT_OPTIONS.info_text_face.setting_suffix)
-	return original_TitlebarWidget_init(self, ...)
+	
+	local TextWidget = require("ui/widget/textwidget")
+	local TextBoxWidget = require("ui/widget/textboxwidget")
+
+	local TW_widgets = {}
+	local TBW_widgets = {}
+
+	local orig_TW_new = TextWidget.new
+	local orig_TBW_new = TextBoxWidget.new
+
+	TextWidget.new = function(klass, t, ...)
+		local widget = orig_TW_new(klass, t, ...)
+		table.insert(TW_widgets, #TW_widgets + 1, widget)
+		return widget
+	end
+
+	TextBoxWidget.new = function(klass, t, ...)
+		local widget = orig_TBW_new(klass, t, ...)
+		table.insert(TBW_widgets, #TBW_widgets + 1, widget)
+		return widget
+	end
+
+	-- Run the original _initChips with the patched TextWidget.new to capture references to the
+	-- chip label widgets for later font updates.
+	original_TitlebarWidget_init(self, ...)
+	
+	TextWidget.new = orig_TW_new
+	TextBoxWidget.new = orig_TBW_new
+
+	local title_face_fullscreen = TitlebarOverrides.FONT_OPTIONS.title_face_fullscreen
+	local title_face_not_fullscreen = TitlebarOverrides.FONT_OPTIONS.title_face_not_fullscreen
+	local subtitle_face = TitlebarOverrides.FONT_OPTIONS.subtitle_face
+	local info_text_face = TitlebarOverrides.FONT_OPTIONS.info_text_face
+
+	local titlebar_font_option = function (widget)
+		if widget == self.title_widget then
+			return self.fullscreen and title_face_fullscreen or title_face_not_fullscreen
+		elseif widget == self.subtitle_widget then
+			return subtitle_face
+		elseif widget.text == self.info_text and widget.face == self.info_text_face then
+			return info_text_face
+		end
+		return nil
+	end
+
+	for _, widget in ipairs(TW_widgets) do
+		rebuildTextWidget(widget, TitlebarOverrides, titlebar_font_option(widget))
+	end
+
+	for _, widget in ipairs(TBW_widgets) do
+		rebuildTextBoxWidget(widget, TitlebarOverrides, titlebar_font_option(widget))
+	end
+	
 end
 
 --------------------------------------------------------------------------------
@@ -1152,7 +1499,6 @@ local CoverBrowserOverrides = FontOverride:new{
 }
 
 local function patchCoverBrowser(plugin)
-	local BookInfoManager = require("bookinfomanager")
     local ListMenu = require("listmenu")
 
     local ListMenuItem = userpatch.getUpValue(ListMenu._updateItemsBuildUI, "ListMenuItem")
@@ -1199,40 +1545,13 @@ local function patchCoverBrowser(plugin)
         VerticalGroup.new = orig_VG_new
         TextBoxWidget.new = orig_TBW_new
 
-        -- Rebuild a TextBoxWidget with a new font path/size.
-        local function rebuildWidget(widget, option_key, font_size, want_bold, want_italic)
-            if not widget then return end
-            local cur_face = widget.face
-            local resolved
-            if option_key then
-				local font_options = CoverBrowserOverrides.FONT_OPTIONS
-				local option_entry = font_options and font_options[option_key]
-				if option_entry and option_entry.setting_suffix then
-					resolved = CoverBrowserOverrides:getFontPath(option_entry.setting_suffix)
-				elseif type(option_key) == "string" then
-					-- Backward-compatible: accept a setting suffix or a fully resolved font path.
-					resolved = CoverBrowserOverrides:getFontPath(option_key) or option_key
-				end
-            else
-                resolved = cur_face and cur_face.ftname
-            end
-            local new_size = font_size or (cur_face and cur_face.orig_size) or 18
-            if resolved == (cur_face and cur_face.ftname)
-                and new_size == (cur_face and cur_face.orig_size) then return end
-            local new_face = resolved and Font:getFace(resolved, new_size)
-            if not new_face or new_face == cur_face then return end
-            widget.face = new_face
-            widget:free(true)
-            widget:init()
-        end
-
         -- Bookinfo found: apply title + authors fonts
         if captured_bookinfo and self.bookinfo_found and not self.is_directory then
             local book_title_font_path = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_title_font.setting_suffix)
             local book_authors_font_path = CoverBrowserOverrides:getFontPath(CoverBrowserOverrides.FONT_OPTIONS.book_authors_font.setting_suffix)
             if book_title_font_path or book_authors_font_path then
-                rebuildWidget(captured_bookinfo.wtitle,   book_title_font_path)
-                rebuildWidget(captured_bookinfo.wauthors, book_authors_font_path)
+                rebuildTextBoxWidget(captured_bookinfo.wtitle,   book_title_font_path)
+                rebuildTextBoxWidget(captured_bookinfo.wauthors, book_authors_font_path)
             end
         end
 
@@ -1241,7 +1560,7 @@ local function patchCoverBrowser(plugin)
             local fp = CoverBrowserOverrides.FONT_OPTIONS.folder_title_font.setting_suffix
 			local folder_font_path = CoverBrowserOverrides:getFontPath(fp)
             if folder_font_path then
-                rebuildWidget(captured_dir, folder_font_path)
+                rebuildTextBoxWidget(captured_dir, folder_font_path)
             end
         end
     end
@@ -1262,41 +1581,49 @@ local BOOKSHELF_FONT_OPTIONS = {
 		setting_suffix = "book_title_font",
 		label = _("Book Title"),
 		default_face_name = "cfont",
+		disable_mods = true,
 	},
 	book_authors_font = {
 		setting_suffix = "book_authors_font",
 		label = _("Book Authors"),
 		default_face_name = "cfont",
+		disable_mods = true,
 	},
 	book_description_font = {
 		setting_suffix = "book_description_font",
 		label = _("Book Description"),
 		default_face_name = "infont",
+		disable_mods = true,
 	},
 	book_metadata_font = {
 		setting_suffix = "book_metadata_font",
 		label = _("Book Metadata"),
 		default_face_name = "x_smallinfofont",
+		disable_mods = true,
 	},
 	book_progress_font = {
 		setting_suffix = "book_progress_font",
 		label = _("Book Progress"),
 		default_face_name = "x_smallinfofont",
+		disable_mods = true,
 	},
 	book_rating_font = {
 		setting_suffix = "book_rating_font",
 		label = _("Book Rating"),
 		default_face_name = "x_smallinfofont",
+		disable_mods = true,
 	},
 	book_status_font = {
 		setting_suffix = "book_status_font",
 		label = _("Device Status"),
 		default_face_name = "x_smallinfofont",
+		disable_mods = true,
 	},
 	book_tags_font = {
 		setting_suffix = "book_tags_font",
 		label = _("Book Tags"),
 		default_face_name = "x_smallinfofont",
+		disable_mods = true,
 	},
 	chip_label_font = {
 		setting_suffix = "chip_label_font",
@@ -1305,7 +1632,7 @@ local BOOKSHELF_FONT_OPTIONS = {
 	},
 	count_badge_font = {
 		setting_suffix = "count_badge_font",
-		label = _("Cover Series Count Badge"),
+		label = _("Cover Series-Count Badge"),
 		default_face_name = "infofont",
 	},
 	folder_label_font = {
@@ -1385,9 +1712,9 @@ local function patchBookshelf(plugin)
 		regions.rating.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_rating_font.setting_suffix) or regions.rating.font_face
 		regions.status.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_status_font.setting_suffix) or regions.status.font_face
 		regions.tags.font_face = BookshelfOverrides:getFontPath(BookshelfOverrides.FONT_OPTIONS.book_tags_font.setting_suffix) or regions.tags.font_face
-        
+		
 		return original_hero_card_build(self, book, regions, state, dimen)
-    end
+	end
 
 	bookshelfChipBar._initChips = function(self, ...)
 		local TextWidget = require("ui/widget/textwidget")
@@ -1423,27 +1750,17 @@ local function patchBookshelf(plugin)
 
 	bookshelfCountBadge.render = function(self, ...)
 		local TextWidget = require("ui/widget/textwidget")
-
-		local badge_widget = nil
-
 		local orig_TW_new = TextWidget.new
 
 		TextWidget.new = function(klass, t, ...)
 			local widget = orig_TW_new(klass, t, ...)
-			if not badge_widget then
-				badge_widget = widget
-			end
-
+			rebuildTextWidget(widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.count_badge_font)
 			return widget
 		end
 
 		local result = original_render_badge(self, ...)
 
 		TextWidget.new = orig_TW_new
-
-		if badge_widget then
-			rebuildTextWidget(badge_widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.count_badge_font) -- rebuild the whole group to avoid layout issues from different font sizes
-        end
 
 		return result
 	end
@@ -1481,13 +1798,11 @@ local function patchBookshelf(plugin)
 	bookshelfSpineWidget._renderShadowedCard = function(self, ...)		
 		local TextWidget = require("ui/widget/textwidget")
 
-		local label_widgets = {}
-
 		local orig_TW_new = TextWidget.new
 
 		TextWidget.new = function(klass, t, ...)
 			local widget = orig_TW_new(klass, t, ...)
-			table.insert(label_widgets, #label_widgets+1, widget)
+			rebuildTextWidget(widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.book_cover_badge_font)
 
 			return widget
 		end
@@ -1495,12 +1810,6 @@ local function patchBookshelf(plugin)
 		local result = original_spine_widget_render(self, ...)
 
 		TextWidget.new = orig_TW_new
-
-		if label_widgets then
-			for _, widget in ipairs(label_widgets) do
-				rebuildTextWidget(widget, BookshelfOverrides, BookshelfOverrides.FONT_OPTIONS.book_cover_badge_font) -- rebuild the whole group to avoid layout issues from different font sizes
-			end
-		end
 
 		return result
 	end
@@ -1746,21 +2055,18 @@ local function patchSimpleUI(plugin)
 			if widget._inner and widget._inner.face and widget._inner.face.realname == SUIStyle.FACE_ICONS then
 	 			return widget
 			end
-			table.insert(widgets, #widgets + 1, widget)
+			-- rebuild the widget with the appropriate font based on whether it's the title or the stats text.
+			if widget._inner and widget._inner.bold == true then
+				rebuildMakeColoredTextWidget(widget, SUICoverdeckOverrides, SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_title_font)
+			elseif widget._inner and widget._inner.bold == false then
+				rebuildMakeColoredTextWidget(widget, SUICoverdeckOverrides, SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_stats_font)
+			end
 			return widget
 		end
 
 		local result = original_coverdeck_build(self, w, ctx)
 
 		UI.makeColoredText = original_UI_makeColoredText
-
-		for _, widget in ipairs(widgets) do
-			if widget._inner and widget._inner.bold == true then
-				rebuildMakeColoredTextWidget(widget, SUICoverdeckOverrides, SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_title_font)
-			elseif widget._inner and widget._inner.bold == false then
-				rebuildMakeColoredTextWidget(widget, SUICoverdeckOverrides, SUICoverdeckOverrides.FONT_OPTIONS.coverdeck_stats_font)
-			end
-		end
 
 		return result
 	end
@@ -2002,6 +2308,251 @@ userpatch.registerPatchPluginFunc("simpleui", patchSimpleUI)
 -- MENU INTEGRATION (Unified)
 --------------------------------------------------------------------------------
 
+local ButtonDialog = require("ui/widget/buttondialog")
+
+local UIManager = require("ui/uimanager")
+
+local function makeFontModMenu(option, override, touchmenu_instance)
+	local my_dialog
+
+	local SpinWidget = require("ui/widget/spinwidget")
+
+	my_dialog = ButtonDialog:new{
+		title = T("EDIT: %1", option.label),
+		title_align = "center",
+		use_info_style = false,
+		buttons = {
+				-- ── Section 1 ──
+				{
+					{ text = "── Forced Bold Text ──", enabled = false }
+				},
+				{
+					{
+						text = "Disabled",
+						enabled_func = function()
+							return override:getForcedBoldSetting(option.setting_suffix) ~= nil
+						end,
+						callback = function()
+							override:saveBoldOverride(option.setting_suffix, nil)
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+					{
+						text = "Forced Bold",
+						enabled_func = function()
+							return override:getForcedBoldSetting(option.setting_suffix) ~= "bold"
+						end,
+						callback = function()
+							override:saveBoldOverride(option.setting_suffix, "bold")
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+					{
+						text = "Forced Not-Bold",
+						enabled_func = function()
+							return override:getForcedBoldSetting(option.setting_suffix) ~= "unbold"
+						end,
+						callback = function()
+							override:saveBoldOverride(option.setting_suffix, "unbold")
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+				},
+
+				-- ── Section 2 ──
+				{
+					enabled = false,
+				},
+				{
+					{ text = "── Font Scale Modification ──", enabled = false }
+				},
+				{
+					{
+						text = "Disabled",
+						enabled_func = function()
+							return override:getFontSizeModSetting(option.setting_suffix) ~= nil or override:getForcedFontSizePercentSetting(option.setting_suffix) ~= nil
+						end,
+						callback = function()
+							override:saveFontSizeModOverride(option.setting_suffix, nil)
+							override:saveFontSizePercentOverride(option.setting_suffix, nil)
+							my_dialog:reinit()
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+					{
+						text_func = function()
+							local current_value = override:getForcedFontSizePercentSetting(option.setting_suffix)
+							if current_value then
+								return T("By Percent (%1)", current_value .. "%")
+							else
+								return "By Percent"
+							end
+						end,
+						callback = function()
+							local current_value = override:getForcedFontSizePercentSetting(option.setting_suffix)
+							UIManager:show(SpinWidget:new{
+								title_text    = T("EDIT: %1", option.label),
+								info_text     = _("Increase or reduce font size by a percentage."),
+								value         = current_value or 100,
+								value_min     = 10,
+								value_max     = 300,
+								value_step    = 10,
+								unit          = "%",
+								ok_text       = _("Apply"),
+								cancel_text   = _("Cancel"),
+								default_value = 100,
+								callback      = function(spin)
+									local new_value = spin.value
+									override:saveFontSizePercentOverride(option.setting_suffix, new_value)
+									override:saveFontSizeModOverride(option.setting_suffix, nil)
+									my_dialog:reinit()
+									UIManager:setDirty(my_dialog, "ui")
+								end,
+							})
+						end,
+					},
+					{
+						text_func = function()
+							local current_value = override:getFontSizeModSetting(option.setting_suffix)
+							if current_value then
+								return T("By Number (%1)", current_value)
+							else
+								return "By Number"
+							end
+						end,
+						callback = function()
+							local current_value = override:getFontSizeModSetting(option.setting_suffix)
+							UIManager:show(SpinWidget:new{
+								title_text    = T("EDIT: %1", option.label),
+								info_text     = _("Increase or reduce font size by a set number."),
+								value         = current_value or 0,
+								value_min     = -50,
+								value_max     = 50,
+								value_step    = 1,
+								unit          = "pts",
+								ok_text       = _("Apply"),
+								cancel_text   = _("Cancel"),
+								default_value = 0,
+								callback      = function(spin)
+									local new_value = spin.value
+									override:saveFontSizePercentOverride(option.setting_suffix, nil)
+									override:saveFontSizeModOverride(option.setting_suffix, new_value)
+									my_dialog:reinit()
+									UIManager:setDirty(my_dialog, "ui")
+								end,
+							})
+						end,
+					},
+				},
+
+				-- ── Section 3 ──
+				{
+					enabled = false,
+				},
+				{
+					{ text = "── Forced Capitalised Text ──", enabled = false }
+				},
+				{
+					{
+						text = "Disabled",
+						enabled_func = function()
+							return override:getForcedCapsSetting(option.setting_suffix) ~= nil
+						end,
+						callback = function()
+							override:saveCapsOverride(option.setting_suffix, nil)
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+					{
+						text = "UPPERCASE",
+						enabled_func = function()
+							return override:getForcedCapsSetting(option.setting_suffix) ~= "uppercase"
+						end,
+						callback = function()
+							override:saveCapsOverride(option.setting_suffix, "uppercase")
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+					{
+						text = "lowercase",
+						enabled_func = function()
+							return override:getForcedCapsSetting(option.setting_suffix) ~= "lowercase"
+						end,
+						callback = function()
+							override:saveCapsOverride(option.setting_suffix, "lowercase")
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+					{
+						text = "Title Case",
+						enabled_func = function()
+							return override:getForcedCapsSetting(option.setting_suffix) ~= "titlecase"
+						end,
+						callback = function()
+							override:saveCapsOverride(option.setting_suffix, "titlecase")
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+				},
+
+				-- ── Section 4 ──
+				{
+					enabled = false,	
+				},
+				{
+					{ text = "── Replace Space Character ──", enabled = false }
+				},
+				{
+					{
+						text = "Disabled",
+						enabled_func = function()
+							local setting = override:getForcedReplaceSetting(option.setting_suffix)
+							return setting ~= nil
+						end,
+						callback = function()
+							override:saveReplaceOverride(option.setting_suffix, nil)
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+					{
+						text = "Underscore (_)",
+						enabled_func = function()
+							return override:getForcedReplaceSetting(option.setting_suffix) ~= "_"
+						end,
+						callback = function()
+							override:saveReplaceOverride(option.setting_suffix, "_")
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+					{
+						text = "Hyphen (-)",
+						enabled_func = function()
+							return override:getForcedReplaceSetting(option.setting_suffix) ~= "-"
+						end,
+						callback = function()
+							override:saveReplaceOverride(option.setting_suffix, "-")
+							UIManager:setDirty(my_dialog, "ui")
+						end,
+					},
+				},
+
+				-- ── Footer ──
+				{
+					enabled = false,
+				},
+				{
+					{
+						text = "Return",
+						callback = function()
+							UIManager:close(my_dialog)
+						end
+					},
+				},
+			},
+		}
+	return my_dialog
+end
+
 local function getFontMenuSubsection(override, labels)
 	labels = labels or {}
 	local menu_text = labels.menu_text or _("Fonts")
@@ -2018,7 +2569,7 @@ local function getFontMenuSubsection(override, labels)
 					return override:hasFontOverride()
 				end,
 				callback = function(touchmenu_instance)
-					deferUIFontAction(function()
+					deferUIAction(function()
 						G_reader_settings:delSetting(override.FONT_PATH_SETTING)
 						G_reader_settings:delSetting(override.FONT_NAME_SETTING)
 						UIManager:setDirty(nil, "ui")
@@ -2063,6 +2614,7 @@ local function getFontMenuSubsection(override, labels)
 	end
 
 	local function buildSlotPickerTable(option)
+
 		local item_table = {
 			{
 				text_func = function()
@@ -2074,7 +2626,7 @@ local function getFontMenuSubsection(override, labels)
 					return override:hasFontSlotOverride(option.setting_suffix)
 				end,
 				callback = function(touchmenu_instance)
-					deferUIFontAction(function()
+					deferUIAction(function()
 						override:clearFontSlotOverride(option.setting_suffix)
 						UIManager:setDirty(nil, "ui")
 					end, function()
@@ -2083,6 +2635,24 @@ local function getFontMenuSubsection(override, labels)
 				end,
 				separator = true,
 			},
+			{
+				text_func = function()
+					local override_present = override:hasFontMod(option.setting_suffix)
+					if override_present then
+						local override_string = override:getFontModString(option.setting_suffix, false)
+						return T(_("Edit font Mods (%1)"), override_string)
+					else
+						return T(_("Edit font Mods"))
+					end
+				end,
+				enabled_func = function()
+					return not option.disable_mods
+				end,
+				callback = function(touchmenu_instance)
+					UIManager:show(makeFontModMenu(option, override, touchmenu_instance))
+				end,
+				separator = true,
+			}
 		}
 
 		local setting_keys = override:getFontSettingKeys(option.setting_suffix)
@@ -2108,6 +2678,12 @@ local function getFontMenuSubsection(override, labels)
 	local function getSlotPickerItem(option)
 		return {
 			text_func = function()
+				-- if font mod is present, show the short version of the mod string in the label, otherwise just show the font name.
+				local override_present = override:hasFontMod(option.setting_suffix)
+				if override_present then
+					local override_string = override:getFontModString(option.setting_suffix, true)
+					return T(_("%1: %2 (%3)"), option.label, BD.wrap(override:getFontDisplay(option.setting_suffix)), override_string)
+				end
 				return T(_("%1: %2"), option.label, BD.wrap(override:getFontDisplay(option.setting_suffix)))
 			end,
 			sub_item_table_func = function()
@@ -2126,7 +2702,7 @@ local function getFontMenuSubsection(override, labels)
 						text = reset_confirm_text,
 						ok_text = _("Reset"),
 						ok_callback = function()
-							deferUIFontAction(function()
+							deferUIAction(function()
 								override:clearFontSlotOverrides(override:getOptionKeyList())
 							end)
 						end,
@@ -2290,7 +2866,7 @@ local function getUIFontMenuItem()
 				end
 				local saved_font_filename = font_filename
 				local saved_font_name = font_name
-				deferUIFontAction(function()
+				deferUIAction(function()
 					setUIFontOverrides(group.options, saved_font_filename, saved_font_name)
 				end, function()
 					returnToParentMenu(touchmenu_instance)
@@ -2379,7 +2955,8 @@ local function getUIFontMenuItem()
 	end
 
 	return {
-		text = _("UI font slots"),
+		text = _("UI font slots (Changes Require Restart)"),
+		separator = true,
 		sub_item_table_func = buildUIFontRootTable,
 	}
 end
@@ -2416,9 +2993,9 @@ local function patchSettingsMenu(menu, order)
 				getFontMenuSubsection(BookshelfOverrides, {
 					menu_text = _("Plugin: Bookshelf fonts")}),
 				getFontMenuSection({
-					[SUIBottombarOverrides] = {
-						menu_text = _("Bottom Bar fonts"),
-					},
+					-- [SUIBottombarOverrides] = {
+					-- 	menu_text = _("Bottom Bar fonts"),
+					-- },
 					[SUIStatWindowOverrides] = {
 						menu_text = _("Stats Window fonts"),
 					},
@@ -2459,4 +3036,4 @@ function ReaderMenu:setUpdateItemTable()
 	original_ReaderMenu_setUpdateItemTable(self)
 end
 
-logger.info("[Ultimate Fonts]: Ultimate Fonts patch applied")
+logger.info("[Ultimate Fonts]: Ultimate Fonts UI patch applied")
